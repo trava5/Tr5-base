@@ -15,11 +15,15 @@
 - The actual application code being built through this pipeline lives in
   `project/`, kept separate from this agentic framework/governance layer
   (`agents/agent.py`, `agents/agent_profile.py`, `agents/contract_workflow.py`,
-  `agents/git_ops.py`, `agents/pipeline.py`, `agents/<name>/`, `memory/`,
-  `contracts/`, `AGENTS.md`, `PRINCIPLES.md`, and the single root entry
-  point `chat_architect.py` — see ADR-021). This repository itself is the
-  reusable starting state ("point zero") copied for each new project — see
-  ADR-015.
+  `agents/git_ops.py`, `agents/pipeline.py`, `agents/voice.py`,
+  `agents/<name>/`, `tools/discovery_engine/`, `templates/voice_module/`,
+  `memory/`, `contracts/`, `AGENTS.md`, `PRINCIPLES.md`, and the single root
+  entry point `chat_architect.py` — see ADR-021). This repository itself is
+  the reusable starting state ("point zero") copied for each new project —
+  see ADR-015. `tools/discovery_engine/` and `templates/voice_module/`
+  (ADR-031, ADR-033) are top-level directories sibling to `agents/`, not
+  subdirectories of it — same as `project/`, `source/`, `memory/`, and
+  `contracts/`.
 - `source/` holds the original/input source code of an existing project
   being migrated onto this pipeline — read-only reference, never edited
   directly; migrated/new code lands in `project/` instead — see ADR-024.

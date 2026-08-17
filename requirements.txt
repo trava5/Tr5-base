@@ -2,3 +2,5 @@ openai-codex
 claude-agent-sdk
 python-dotenv
 pytest
+pyaudio
+google-genai

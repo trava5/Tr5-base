@@ -1218,3 +1218,119 @@ outstanding.
   `python -m pytest -q` — 64/64 passing (unchanged from ADR-031, as
   expected for a documentation-only phase).
 - Deliberately deferred: voice (Phase 7).
+
+## ADR-033: Voice — `/voice` in `chat_architect.py` plus a reusable, decoupled `templates/voice_module/`
+
+Tr5-base decision 4 (Phase 7 of the implementation plan referenced in
+ADR-028), the last phase of the plan.
+
+- New top-level directory `templates/`, sibling to `agents/`, `tools/`,
+  `memory/`, `contracts/`, `project/`, `source/` — not a subdirectory of
+  `agents/` or `tools/` (a template is a seed a project's own code copies
+  from, not framework code that runs directly, and not a Discovery-Engine-
+  style tool that observes the repository). `templates/voice_module/` is
+  its first (and, so far, only) member: `audio_io.py`
+  (`AudioBackend`/`AudioStream` Protocols plus `PyAudioBackend`, wrapping
+  exactly one shared `pyaudio.PyAudio()` instance for the whole session —
+  PRINCIPLES.md P17), `gemini_voice_bridge.py` (`VoiceBridge` Protocol
+  plus `GeminiVoiceBridge`), `live_voice_session.py`
+  (`LiveVoiceSession`, the orchestrator), and its own `README.md`
+  explaining the design and how a project copies it into `project/` for
+  its own product's voice feature (decision 4, item 3b) — see that
+  `README.md` for the full reasoning, only summarized here.
+- **Resolved the plan's own open design question** before writing code:
+  `chat_architect.py` talks to the Architect through its own Codex/Claude
+  Agent SDK thread (`agents/agent.py`), never through Gemini — so Gemini
+  is used purely for speech-to-text/text-to-speech duty, decoupled from
+  whichever provider actually reasons about the conversation. This is why
+  `gemini_voice_bridge.py` opens **two independent, short-lived** Gemini
+  Live sessions per conversational turn — `transcribe_turn()` (STT only;
+  the session's own generated reply is never read, only
+  `input_transcription` text) and `speak_text()` (TTS only, given a strict
+  system instruction to read the supplied text verbatim) — instead of
+  reusing `Tr5-platform`'s `gemini_live_audio_handler.py` pattern of "one
+  Live session IS the assistant," which is right for `voice_agent` but
+  wrong here.
+- Also unlike `voice_agent`: no FastAPI backend, no websocket hop.
+  `chat_architect.py` is already the one local process holding the
+  conversation, so `LiveVoiceSession` talks to Gemini and the local
+  microphone/speakers directly — a deliberate simplification, not a
+  partial port.
+- `LiveVoiceSession`'s turn loop is sequential, not simultaneous: open a
+  mic stream, transcribe one turn to completion, close it; then open a
+  speaker stream, speak the reply to completion, close it; then listen
+  again. A plain CLI mic/speaker setup has no echo cancellation, so
+  streaming the mic while playback is active would let the assistant hear
+  itself.
+- **Real concurrency bug found and fixed during implementation, not just
+  during review**: an early version of `GeminiVoiceBridge.
+  _transcribe_turn_async()`'s `_send()` coroutine iterated the (blocking,
+  synchronous) mic-chunk generator directly inside the coroutine — each
+  `next()` call blocks on a real `stream.read()`, which would have
+  blocked the single-threaded asyncio event loop for the duration of
+  every chunk read, starving the concurrently-scheduled `_receive()` task
+  and delaying `turn_complete` detection on every chunk sent during an
+  utterance, not just once. Fixed by offloading each `next()` call via
+  `asyncio.to_thread`. This is exactly the class of bug PRINCIPLES.md P16
+  describes (a fake with an instant `next()` would never expose it) —
+  caught here by reasoning about the real blocking call's effect on the
+  event loop while writing the code, then verified with a regression test
+  that checks *which thread* runs the mic-chunk `next()` calls (must never
+  be the event-loop's own calling thread), not a wall-clock timing
+  threshold, which proved too fragile as a discriminator once actually
+  measured (an `asyncio.run()`-per-call design pays a small, bounded,
+  unavoidable shutdown-wait for one orphaned worker thread regardless —
+  documented in the test itself, not hidden).
+- `agents/voice.py` (new, framework layer, alongside `agents/git_ops.py`
+  as a non-core-dataclass support module) wires `templates/voice_module/`
+  into `chat_architect.py`: `VoiceConfig.load()` reads `GEMINI_API_KEY`/
+  `GEMINI_LIVE_MODEL` from `.env` and raises a clear `RuntimeError` if the
+  key is missing (checked before any hardware/SDK object is constructed —
+  `/voice` fails fast, not partway into opening a session);
+  `start_voice_session(ask_callback, ...)` builds a real `PyAudioBackend`,
+  `GeminiVoiceBridge`, and `LiveVoiceSession` and starts it.
+- `chat_architect.py`: new `/voice` / `/voice end` commands (HELP text
+  updated); a `voice_session` variable in `main()`'s closure tracks the
+  running session so `/exit` also stops it cleanly instead of leaving a
+  background thread and an open `pyaudio.PyAudio()` instance behind.
+- `requirements.txt`: added `pyaudio`, `google-genai` — decision 4, item
+  3a states `/voice` "ships with every project cloned from the new bod_zero
+  template," i.e. as a base dependency of the single root entry point, not
+  a separately-installed extra (unlike `templates/voice_module/`'s *second*
+  use, item 3b, which is genuinely opt-in per project and copied in only
+  when wanted). `.env.example`: added `GEMINI_API_KEY`/`GEMINI_LIVE_MODEL`,
+  both blank by default — every other command works without them.
+  `AGENTS.md`'s framework-layer file list updated to include
+  `agents/voice.py`, `tools/discovery_engine/`, and
+  `templates/voice_module/` (the last two were themselves missing from
+  that list since ADR-031 — fixed here rather than left stale further,
+  same spirit as this phase's own fix to `PRINCIPLES.md` P6 in ADR-032).
+- **Verification**: `python -m pytest -q` — 77/77 passing (13 new). Real
+  deferred-import checks (PRINCIPLES.md P2) — `PyAudioBackend()` and
+  `GeminiVoiceBridge()` are actually constructed for real in this
+  repository's own CI environment (both packages are real dependencies,
+  not skipped/mocked at the import boundary): `pyaudio.PyAudio()`
+  succeeds even with zero audio devices present; `genai.Client(api_key=
+  ...)` makes no network call on construction, so a fake key is safe to
+  use here. `LiveVoiceSession` orchestration (full turn, empty-transcript
+  turns skip ask/speak, idempotent `stop()`, double-`start()` raises,
+  errors reported via `on_error` instead of crashing silently) is tested
+  against fake `AudioBackend`/`VoiceBridge` implementations — no real
+  hardware or network reachable from these tests (P4). `agents/voice.py`
+  is tested for the fail-fast-without-`GEMINI_API_KEY` path (asserting
+  `PyAudioBackend`/`GeminiVoiceBridge` are never even constructed) and for
+  correctly wiring `ask_callback` into a (fake) `LiveVoiceSession`. What
+  these tests cannot and do not claim to cover — an actual microphone,
+  actual speakers, an actual `GEMINI_API_KEY`, and a real conversation —
+  is real-world verification the person does once on their own machine,
+  the same way `Tr5-platform`'s own PortAudio/threading incidents (the
+  source of P17 itself) were only ever found by a person actually running
+  the client.
+- `Tr5-platform`'s `projects/voice_agent/` was read only, as a reference
+  source — left completely untouched (decision 4, item 3c).
+- Deliberately deferred (see `templates/voice_module/README.md`'s own
+  Future Evolution note): the TTS-verbatim system-instruction design has
+  not been validated against a real conversation yet — that first real
+  `/voice` session is its actual test.
+
+This completes `tr5_base_implementation_plan.md`'s Phase 0–7 sequence.

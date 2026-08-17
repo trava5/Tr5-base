@@ -19,6 +19,7 @@ from agents.pipeline import (
     print_status,
     show_inbox,
 )
+from agents.voice import start_voice_session
 
 
 HELP = """
@@ -43,6 +44,11 @@ Commands available alongside the conversation:
                       (must be APPROVED); routine for standard-risk
                       contracts (already auto-pushed), the actual manual
                       step for high-risk ones
+  /voice            switches to voice input/output with the architect
+                      (text is still echoed to the screen); needs
+                      GEMINI_API_KEY in .env — used only for speech-to-text/
+                      text-to-speech, never for the architect's own reasoning
+  /voice end        returns to typed-only input
   /status           shows the contract queue
   /inbox            shows the architect's inbox
   /help             shows this help
@@ -81,6 +87,14 @@ def main(project_root: Path = WORKSPACE) -> None:
 
         print("(/help for commands, /exit to quit)\n")
 
+        voice_session = None
+
+        def _stop_voice_session() -> None:
+            nonlocal voice_session
+            if voice_session is not None:
+                voice_session.stop()
+                voice_session = None
+
         while True:
             try:
                 raw = input("You: ").strip()
@@ -91,6 +105,7 @@ def main(project_root: Path = WORKSPACE) -> None:
             if not raw:
                 continue
             if raw in {"/exit", "/quit", "exit", "quit"}:
+                _stop_voice_session()
                 break
             if raw == "/help":
                 print(HELP)
@@ -100,6 +115,30 @@ def main(project_root: Path = WORKSPACE) -> None:
                 continue
             if raw == "/inbox":
                 show_inbox(project_root, "architect")
+                continue
+            if raw == "/voice":
+                if voice_session is not None and voice_session.is_running:
+                    print("\nVoice session already running — say '/voice end' to stop it first.\n")
+                    continue
+                try:
+                    voice_session = start_voice_session(
+                        architect.ask,
+                        on_error=lambda error: print(f"\nVoice session error: {error}\n"),
+                    )
+                    print(
+                        "\nVoice session started — speak into your microphone. "
+                        "Type '/voice end' to stop.\n"
+                    )
+                except Exception as error:
+                    print(f"\nCould not start the voice session: {error}\n")
+                continue
+            if raw == "/voice end":
+                if voice_session is None or not voice_session.is_running:
+                    print("\nNo voice session is running.\n")
+                    voice_session = None
+                else:
+                    _stop_voice_session()
+                    print("\nVoice session stopped.\n")
                 continue
             if raw.startswith("/new "):
                 try:

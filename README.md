@@ -48,6 +48,11 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
+`requirements.txt` includes `pyaudio` (for `/voice`'s microphone/speaker
+access) — on Windows this installs from a prebuilt wheel with no extra
+steps; on Linux it needs the PortAudio system library installed first
+(e.g. `apt-get install portaudio19-dev`) for `pip install` to build it.
+
 ## Login
 
 ```powershell
@@ -107,6 +112,10 @@ alongside the conversation:
                   be APPROVED); routine for standard-risk contracts (already
                   auto-pushed, so usually a no-op), the actual manual step
                   for high-risk ones
+/voice            switches to voice input/output with the architect (text
+                  is still echoed to the screen at the same time); needs
+                  GEMINI_API_KEY in .env — see "Voice" below
+/voice end        returns to typed-only input
 /status           shows the queue, handoffs, and risk level
 /inbox            shows the architect's inbox
 /help             shows this list again
@@ -222,6 +231,32 @@ never drift the way a manually-proposed memory update could. Only the
 architect has it loaded (`load_working_state: true`); the reviewer and
 programmer don't (Tr5-base decision 9 — no standing state to track
 between fresh-thread calls).
+
+## Voice
+
+`/voice` in `chat_architect.py` (Tr5-base decision 4, `memory/DECISIONS.md`
+ADR-033) opens a live audio conversation with the architect: speech is
+transcribed, fed into the architect's own `ask()` call exactly like typed
+input, and the reply is spoken back — the transcript keeps printing to the
+screen throughout, so voice is never the only record of what was said.
+`/voice end` returns to typed-only input.
+
+Gemini is used here purely for speech-to-text/text-to-speech duty, never
+for the actual reasoning: the architect is still reached through its own
+Codex/Claude Agent SDK thread (`agents/agent.py`). This needs its own
+`GEMINI_API_KEY` in `.env` (see `.env.example`) — every other command
+works without it; `/voice` fails with a clear error if it is missing,
+rather than partway through starting a session.
+
+`agents/voice.py` wires this into `chat_architect.py` by importing
+`templates/voice_module/` — a standalone, copyable package extracted from
+`Tr5-platform`'s `voice_agent` (see its own `README.md` for the full
+design, including why it opens two independent Gemini Live sessions per
+turn instead of one). That same package is also what a project cloned
+from this template copies into `project/` if its own product needs voice
+control for its own users, entirely decoupled from `chat_architect.py`
+and with its own `GEMINI_API_KEY` — this file's `/voice` command and a
+project's own product-facing voice feature never share a credential.
 
 ## Permissions
 

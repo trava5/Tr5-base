@@ -222,9 +222,13 @@ class ContractStore:
         (`architecture_review_rounds`) is never cleared. After revision the
         contract returns to DRAFT and is handed back to the reviewer.
 
-        `risk_level` is left unchanged unless explicitly given — a prior
-        escalation to "high" (by the architect at creation or the reviewer
-        during architecture review) is not silently lost on revision.
+        `risk_level` follows the same escalation-only rule as
+        `record_architecture_review` (Tr5-base decision 7 — "never
+        downgraded back to standard by anyone"): omitting it leaves the
+        current value unchanged (a prior escalation to "high" is not
+        silently lost on revision), and passing `"standard"` explicitly
+        on a contract already `"high"` is a no-op, not a downgrade — there
+        is no code path, silent or explicit, that lowers risk_level.
         """
         contract = self.load(number)
         if contract.status != "ARCHITECTURE_CHANGES_REQUESTED":
@@ -249,7 +253,8 @@ class ContractStore:
                 raise ValueError(
                     f"Invalid risk_level: {risk_level!r}. Must be 'standard' or 'high'."
                 )
-            contract.risk_level = risk_level_upper  # type: ignore[assignment]
+            if risk_level_upper == "high":
+                contract.risk_level = "high"
         contract.status = "DRAFT"
         contract.assigned_to = contract.reviewer
         contract.handoff_to = contract.reviewer

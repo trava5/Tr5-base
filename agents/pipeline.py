@@ -1,17 +1,31 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Callable
 
 from .agent_profile import Agent
 from .contract_workflow import Contract, ContractStore, MemoryUpdate, parse_json_response
 from .git_ops import commit_and_push
 from tools.discovery_engine.generate_current_state import render_diff_markdown, run_discovery_scan
 
+# Tr5-base decision 9: the reviewer and the programmer get a brand-new
+# thread for every single call — no carryover between contracts, and none
+# between a contract's own Architecture Review and its later Implementation
+# Review either. A live `Agent` cannot provide that on its own (asking it
+# twice just continues the same underlying conversation) — so every
+# function below that actually needs to talk to the reviewer or the
+# programmer takes a zero-argument factory instead of a constructed
+# `Agent`, and constructs (then closes) a fresh one for that one call. Only
+# the architect is a long-lived `Agent`, passed in directly — decision 9
+# explicitly allows it to stay naturally continuous within one
+# `chat_architect.py` session.
+AgentFactory = Callable[[], Agent]
+
 
 def create_contract(
     architect: Agent,
-    reviewer: Agent,
-    programmer: Agent,
+    reviewer_factory: AgentFactory,
+    programmer_factory: AgentFactory,
     store: ContractStore,
     task: str,
 ) -> None:
@@ -35,14 +49,14 @@ def create_contract(
         risk_level=str(data.get("risk_level", "standard")),
     )
     print(f"Created {store.path_for(contract.number).name} (DRAFT, risk: {contract.risk_level})")
-    reviewed = run_architecture_review(reviewer, store, contract.number)
-    continue_pipeline(reviewer, programmer, store, reviewed)
+    reviewed = run_architecture_review(reviewer_factory, store, contract.number)
+    continue_pipeline(reviewer_factory, programmer_factory, store, reviewed)
 
 
 def revise_contract(
     architect: Agent,
-    reviewer: Agent,
-    programmer: Agent,
+    reviewer_factory: AgentFactory,
+    programmer_factory: AgentFactory,
     store: ContractStore,
     number: int,
     task: str,
@@ -64,12 +78,15 @@ def revise_contract(
         risk_level=data.get("risk_level"),
     )
     print(f"IMPLEMENTATION_CONTRACT_{number:04d} rewritten (DRAFT).")
-    reviewed = run_architecture_review(reviewer, store, number)
-    continue_pipeline(reviewer, programmer, store, reviewed)
+    reviewed = run_architecture_review(reviewer_factory, store, number)
+    continue_pipeline(reviewer_factory, programmer_factory, store, reviewed)
 
 
 def continue_pipeline(
-    reviewer: Agent, programmer: Agent, store: ContractStore, contract: Contract
+    reviewer_factory: AgentFactory,
+    programmer_factory: AgentFactory,
+    store: ContractStore,
+    contract: Contract,
 ) -> None:
     """Chains the automatic part of the pipeline after architecture review.
 
@@ -104,11 +121,14 @@ def continue_pipeline(
         )
         return
 
-    _implement_and_review(reviewer, programmer, store, contract.number)
+    _implement_and_review(reviewer_factory, programmer_factory, store, contract.number)
 
 
 def proceed(
-    reviewer: Agent, programmer: Agent, store: ContractStore, number: int
+    reviewer_factory: AgentFactory,
+    programmer_factory: AgentFactory,
+    store: ContractStore,
+    number: int,
 ) -> None:
     """Resumes a high-risk contract paused by `continue_pipeline` (Tr5-base
     decision 7). Standard-risk contracts never pause, so this only does
@@ -119,10 +139,10 @@ def proceed(
     point."""
     contract = store.load(number)
     if contract.status == "READY_FOR_PROGRAMMER":
-        _implement_and_review(reviewer, programmer, store, number)
+        _implement_and_review(reviewer_factory, programmer_factory, store, number)
         return
     if contract.status == "READY_FOR_REVIEWER":
-        _review_and_commit(reviewer, store, number)
+        _review_and_commit(reviewer_factory, store, number)
         return
     print(
         f"IMPLEMENTATION_CONTRACT_{number:04d} is not at a pause point "
@@ -131,9 +151,12 @@ def proceed(
 
 
 def _implement_and_review(
-    reviewer: Agent, programmer: Agent, store: ContractStore, number: int
+    reviewer_factory: AgentFactory,
+    programmer_factory: AgentFactory,
+    store: ContractStore,
+    number: int,
 ) -> None:
-    implemented = implement_next(programmer, store, number=number)
+    implemented = implement_next(programmer_factory, store, number=number)
     if implemented is None:
         return
 
@@ -154,11 +177,13 @@ def _implement_and_review(
         )
         return
 
-    _review_and_commit(reviewer, store, implemented.number)
+    _review_and_commit(reviewer_factory, store, implemented.number)
 
 
-def _review_and_commit(reviewer: Agent, store: ContractStore, number: int) -> None:
-    reviewed = run_implementation_review(reviewer, store, number=number)
+def _review_and_commit(
+    reviewer_factory: AgentFactory, store: ContractStore, number: int
+) -> None:
+    reviewed = run_implementation_review(reviewer_factory, store, number=number)
     if reviewed is None or reviewed.status != "APPROVED":
         return
 
@@ -205,13 +230,20 @@ def commit_approved_contract(store: ContractStore, number: int) -> None:
     )
 
 
-def run_architecture_review(reviewer: Agent, store: ContractStore, number: int) -> Contract:
+def run_architecture_review(
+    reviewer_factory: AgentFactory, store: ContractStore, number: int
+) -> Contract:
+    """Constructs a brand-new reviewer thread for this one call and closes
+    it afterward (Tr5-base decision 9) — never a thread reused from a prior
+    contract's review, and never the same thread this same contract's own
+    later Implementation Review will use."""
     path = store.path_for(number)
-    response = reviewer.run_command(
-        "architecture_review",
-        contract_path=path.relative_to(store.project_root).as_posix(),
-        contract_content=path.read_text(encoding="utf-8"),
-    )
+    with reviewer_factory() as reviewer:
+        response = reviewer.run_command(
+            "architecture_review",
+            contract_path=path.relative_to(store.project_root).as_posix(),
+            contract_content=path.read_text(encoding="utf-8"),
+        )
     data = parse_json_response(response)
     updates = [
         MemoryUpdate(path=str(item["path"]), text=str(item["text"]))
@@ -232,8 +264,11 @@ def run_architecture_review(reviewer: Agent, store: ContractStore, number: int) 
 
 
 def implement_next(
-    programmer: Agent, store: ContractStore, *, number: int | None = None
+    programmer_factory: AgentFactory, store: ContractStore, *, number: int | None = None
 ) -> Contract | None:
+    """Constructs a brand-new programmer thread for this one call and
+    closes it afterward (Tr5-base decision 9) — never a thread reused
+    across contracts."""
     if number is None:
         queued = store.next_for_programmer()
         if queued is None:
@@ -243,11 +278,12 @@ def implement_next(
 
     contract = store.claim(number)
     path = store.path_for(contract.number)
-    response = programmer.run_command(
-        "implement_contract",
-        contract_path=path.relative_to(store.project_root).as_posix(),
-        contract_content=path.read_text(encoding="utf-8"),
-    )
+    with programmer_factory() as programmer:
+        response = programmer.run_command(
+            "implement_contract",
+            contract_path=path.relative_to(store.project_root).as_posix(),
+            contract_content=path.read_text(encoding="utf-8"),
+        )
     data = parse_json_response(response)
     contract = store.record_programmer_result(
         contract.number,
@@ -260,11 +296,13 @@ def implement_next(
 
 
 def run_implementation_review(
-    reviewer: Agent, store: ContractStore, *, number: int | None = None
+    reviewer_factory: AgentFactory, store: ContractStore, *, number: int | None = None
 ) -> Contract | None:
-    """Runs implementation review via the reviewer agent (Tr5-base decision
-    1 — the reviewer holds both review gates, not the architect). Feeds it
-    the discovery-engine diff between the pre-implementation and
+    """Runs implementation review via a brand-new reviewer thread (Tr5-base
+    decision 1 — the reviewer holds both review gates, not the architect;
+    decision 9 — this thread has no memory of this same contract's own
+    earlier Architecture Review, or of any other contract). Feeds it the
+    discovery-engine diff between the pre-implementation and
     post-implementation snapshots (Tr5-base decision 3), so the Out of
     Scope check is grounded in a mechanical added/removed/changed list
     instead of the reviewer eyeballing `git diff` itself."""
@@ -284,12 +322,13 @@ def run_implementation_review(
     )
 
     path = store.path_for(number)
-    response = reviewer.run_command(
-        "review_contract",
-        contract_path=path.relative_to(store.project_root).as_posix(),
-        contract_content=path.read_text(encoding="utf-8"),
-        out_of_scope_diff=diff_text,
-    )
+    with reviewer_factory() as reviewer:
+        response = reviewer.run_command(
+            "review_contract",
+            contract_path=path.relative_to(store.project_root).as_posix(),
+            contract_content=path.read_text(encoding="utf-8"),
+            out_of_scope_diff=diff_text,
+        )
     data = parse_json_response(response)
     updates = [
         MemoryUpdate(path=str(item["path"]), text=str(item["text"]))

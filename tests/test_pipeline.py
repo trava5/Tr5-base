@@ -10,18 +10,30 @@ from agents.contract_workflow import ContractStore
 
 
 class ScriptedAgent:
-    """Minimal stand-in for Agent: only needs .run_command(name, **vars)."""
+    """Minimal stand-in for Agent: only needs .run_command(name, **vars)
+    plus the context-manager surface `pipeline.py` uses when it constructs
+    a reviewer/programmer from a factory (Tr5-base decision 9)."""
 
     def __init__(self, responses: dict[str, list[str]]) -> None:
         self.responses = responses
         self.calls: list[str] = []
         self.call_variables: list[dict[str, str]] = []
+        self.closed = False
 
     def run_command(self, command_name: str, **variables: str) -> str:
         self.calls.append(command_name)
         self.call_variables.append(variables)
         queue = self.responses[command_name]
         return queue.pop(0)
+
+    def close(self) -> None:
+        self.closed = True
+
+    def __enter__(self) -> "ScriptedAgent":
+        return self
+
+    def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+        self.close()
 
 
 class FakeGit:
@@ -112,13 +124,16 @@ def test_create_contract_chains_through_to_implementation_review(
         }
     )
 
-    pipeline.create_contract(architect, reviewer, programmer, store, "Add X")
+    pipeline.create_contract(
+        architect, lambda: reviewer, lambda: programmer, store, "Add X"
+    )
 
     contract = store.load(1)
     assert contract.status == "APPROVED"
     assert reviewer.calls == ["architecture_review", "review_contract"]
     assert programmer.calls == ["implement_contract"]
     assert architect.calls == ["create_contract"]
+    assert reviewer.closed and programmer.closed
     # standard-risk contracts auto-chain through all three checkpoints
     # (Tr5-base decision 5): CONTRACT_NNNN, - IMPLEMENTED, - REVIEWED.
     assert fake_git.calls == [
@@ -192,7 +207,9 @@ def test_create_contract_stops_when_changes_requested_at_architecture_review(
     )
     programmer = ScriptedAgent({})
 
-    pipeline.create_contract(architect, reviewer, programmer, store, "Add X")
+    pipeline.create_contract(
+        architect, lambda: reviewer, lambda: programmer, store, "Add X"
+    )
 
     contract = store.load(1)
     assert contract.status == "ARCHITECTURE_CHANGES_REQUESTED"
@@ -257,7 +274,9 @@ def test_create_contract_stops_after_changes_requested_implementation_review(
         }
     )
 
-    pipeline.create_contract(architect, reviewer, programmer, store, "Add X")
+    pipeline.create_contract(
+        architect, lambda: reviewer, lambda: programmer, store, "Add X"
+    )
 
     contract = store.load(1)
     assert contract.status == "CHANGES_REQUESTED"
@@ -303,7 +322,9 @@ def test_high_risk_contract_pauses_before_implementation(
     )
     programmer = ScriptedAgent({})
 
-    pipeline.create_contract(architect, reviewer, programmer, store, "Add X")
+    pipeline.create_contract(
+        architect, lambda: reviewer, lambda: programmer, store, "Add X"
+    )
 
     contract = store.load(1)
     assert contract.status == "READY_FOR_PROGRAMMER"
@@ -357,7 +378,7 @@ def test_proceed_resumes_high_risk_contract_through_both_pause_points(
     )
 
     # First /proceed: resumes implementation, then pauses again before review.
-    pipeline.proceed(reviewer, programmer, store, 1)
+    pipeline.proceed(lambda: reviewer, lambda: programmer, store, 1)
     contract = store.load(1)
     assert contract.status == "READY_FOR_REVIEWER"
     assert programmer.calls == ["implement_contract"]
@@ -368,7 +389,7 @@ def test_proceed_resumes_high_risk_contract_through_both_pause_points(
 
     # Second /proceed: resumes implementation review. Approved, but the
     # final REVIEWED commit is not pushed automatically for high risk.
-    pipeline.proceed(reviewer, programmer, store, 1)
+    pipeline.proceed(lambda: reviewer, lambda: programmer, store, 1)
     contract = store.load(1)
     assert contract.status == "APPROVED"
     assert reviewer.calls == ["review_contract"]
@@ -392,7 +413,7 @@ def test_proceed_reports_no_pause_point_for_unrelated_status(
 
     reviewer = ScriptedAgent({})
     programmer = ScriptedAgent({})
-    pipeline.proceed(reviewer, programmer, store, 1)
+    pipeline.proceed(lambda: reviewer, lambda: programmer, store, 1)
 
     assert "not at a pause point" in capsys.readouterr().out
     assert reviewer.calls == []
@@ -417,7 +438,9 @@ def test_create_contract_runs_discovery_scan_first(tmp_path: Path) -> None:
     )
     programmer = ScriptedAgent({})
 
-    pipeline.create_contract(architect, reviewer, programmer, store, "Add X")
+    pipeline.create_contract(
+        architect, lambda: reviewer, lambda: programmer, store, "Add X"
+    )
 
     current_state = tmp_path / "memory" / "CURRENT_STATE.md"
     assert current_state.is_file()
@@ -457,7 +480,7 @@ def test_run_implementation_review_passes_discovery_diff_to_reviewer(
         }
     )
 
-    pipeline.run_implementation_review(reviewer, store, number=1)
+    pipeline.run_implementation_review(lambda: reviewer, store, number=1)
 
     diff_text = reviewer.call_variables[0]["out_of_scope_diff"]
     assert "extra_file.py" in diff_text
@@ -502,7 +525,93 @@ def test_run_implementation_review_handles_missing_snapshot_gracefully(
         }
     )
 
-    pipeline.run_implementation_review(reviewer, store, number=1)
+    pipeline.run_implementation_review(lambda: reviewer, store, number=1)
 
     diff_text = reviewer.call_variables[0]["out_of_scope_diff"]
     assert "No discovery snapshot available" in diff_text
+
+
+def test_reviewer_and_programmer_get_a_fresh_agent_for_every_call(
+    tmp_path: Path,
+) -> None:
+    """Tr5-base decision 9: the reviewer and programmer get a brand-new
+    thread for every single call — no carryover between contracts, and
+    none between a contract's own Architecture Review and its later
+    Implementation Review either. `chat_architect.py` previously
+    constructed one reviewer/programmer `Agent` per session and reused it
+    for every command, silently defeating this guarantee even though
+    `config.json`/command templates/ADR-029 all documented it as true —
+    this test exercises `pipeline.py`'s factory-based fix directly, so a
+    regression here (someone passing a live `Agent` back in instead of a
+    factory) is caught without needing to drive `chat_architect.py`
+    itself."""
+    store = create_store(tmp_path)
+    architect = ScriptedAgent(
+        {
+            "create_contract": [
+                json.dumps({"title": "Test", "points": [{"assignment": "Do X"}]})
+            ],
+        }
+    )
+
+    reviewer_instances: list[ScriptedAgent] = []
+
+    def make_reviewer() -> ScriptedAgent:
+        agent = ScriptedAgent(
+            {
+                "architecture_review": [
+                    json.dumps({"verdict": "ACCEPTED", "findings": "fine"})
+                ],
+                "review_contract": [
+                    json.dumps(
+                        {
+                            "approved": True,
+                            "summary": "Good",
+                            "reviews": [
+                                {"point": 1, "status": "APPROVED", "review": "ok"}
+                            ],
+                            "out_of_scope_ok": True,
+                            "out_of_scope_findings": "fine",
+                            "memory_updates": [],
+                        }
+                    )
+                ],
+            }
+        )
+        reviewer_instances.append(agent)
+        return agent
+
+    programmer_instances: list[ScriptedAgent] = []
+
+    def make_programmer() -> ScriptedAgent:
+        agent = ScriptedAgent(
+            {
+                "implement_contract": [
+                    json.dumps(
+                        {
+                            "summary": "done",
+                            "notes": [
+                                {"point": 1, "note": "did it", "files": [], "tests": []}
+                            ],
+                            "tests": [],
+                        }
+                    )
+                ],
+            }
+        )
+        programmer_instances.append(agent)
+        return agent
+
+    pipeline.create_contract(architect, make_reviewer, make_programmer, store, "Add X")
+
+    # Architecture Review and Implementation Review are two different
+    # calls to the reviewer — each must get its own fresh instance, not
+    # the same one carrying the other's conversation.
+    assert len(reviewer_instances) == 2
+    assert reviewer_instances[0] is not reviewer_instances[1]
+    assert reviewer_instances[0].calls == ["architecture_review"]
+    assert reviewer_instances[1].calls == ["review_contract"]
+    assert all(agent.closed for agent in reviewer_instances)
+
+    assert len(programmer_instances) == 1
+    assert all(agent.closed for agent in programmer_instances)

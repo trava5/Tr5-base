@@ -1334,3 +1334,140 @@ ADR-028), the last phase of the plan.
   `/voice` session is its actual test.
 
 This completes `tr5_base_implementation_plan.md`'s Phase 0–7 sequence.
+
+## ADR-034: Post-migration audit — two real gaps found and fixed, plus stale-branding cleanup
+
+Requested by the owner after Phase 7 landed: "thoroughly review the whole
+repo and confirm every intended migration step is correctly implemented
+and the project fits together as a whole, as intended." Five independent
+audits ran against a fresh clone of the pushed repository (not the local
+working copy), one per decision cluster (1/5/7/8, 3/10, 6/9, 4, and a
+whole-repo consistency/hygiene sweep), each explicitly told to be
+skeptical and cite file:line evidence rather than trust prose claims. Two
+real implementation gaps were found and are fixed by this same commit;
+everything else audited came back confirmed correct.
+
+**Gap 1 — decision 9 ("fresh thread per call") was not actually true.**
+`chat_architect.py` constructed the `reviewer` and `programmer` agents
+**once**, at session start, inside the top-level `ExitStack`, and reused
+those same two long-lived `Agent` objects (and therefore the same
+underlying SDK conversational thread) for every `/new`, `/revise`,
+`/work`, `/review`, and `/proceed` call for the rest of the session —
+across every contract, and even between one contract's own Architecture
+Review and its later Implementation Review. `config.json`'s
+`load_private_memory: false`/`load_working_state: false`, the command
+templates' own claims ("you are given a fresh thread with no memory of
+past contracts"), `PRINCIPLES.md` P10's revision note, and ADR-029 itself
+all asserted this was already true; none of it was backed by an actual
+mechanism. `AgentProfileConfig.persistent_thread` — the flag that sounds
+like it should govern this — is parsed from `config.json` but was never
+read anywhere in `create_agent()`/`create_thread()`/`Agent`, so it had no
+effect either way.
+
+Fixed structurally, not by convention: `agents/pipeline.py`'s functions
+that talk to the reviewer/programmer (`run_architecture_review`,
+`implement_next`, `run_implementation_review`) now take a zero-argument
+`AgentFactory` (`Callable[[], Agent]`) instead of a constructed `Agent`,
+and construct-use-close a brand-new one inside a `with` block for that one
+call only (`Agent` already supported the context-manager protocol —
+`agent.py`'s `close()`/`__enter__`/`__exit__` — this only needed to
+actually be invoked per call). The pass-through functions
+(`create_contract`, `revise_contract`, `continue_pipeline`, `proceed`,
+`_implement_and_review`, `_review_and_commit`) were renamed to take
+`reviewer_factory`/`programmer_factory` and forward them unchanged — they
+never call `.run_command()` themselves. `chat_architect.py` now builds
+`reviewer_factory = lambda: create_agent("reviewer", ...)` and
+`programmer_factory = lambda: create_agent("programmer", ...)` instead of
+constructing those two agents once; only the `architect` stays a single
+long-lived `Agent` for the whole session, exactly as decision 9 always
+intended ("naturally continuous within one session," the one role
+allowed that). `tests/test_pipeline.py`'s `ScriptedAgent` gained
+`close()`/`__enter__`/`__exit__`; every existing call site now passes a
+factory (`lambda: reviewer`, returning the same scripted double, to keep
+existing call-sequence assertions meaningful); a new dedicated test,
+`test_reviewer_and_programmer_get_a_fresh_agent_for_every_call`, uses a
+factory that constructs a genuinely new `ScriptedAgent` per call and
+asserts Architecture Review and Implementation Review get two distinct
+instances, each closed — the coverage gap the audit specifically flagged
+(no prior test would have caught the bug even though it existed).
+
+**Gap 2 — decision 7's "never downgraded back to standard by anyone" had
+one real exception.** `record_architecture_review()` correctly enforces
+escalation-only (passing `"standard"` there is a documented no-op). But
+`ContractStore.revise_contract()` set `contract.risk_level` unconditionally
+whenever a caller passed one — silently allowing the architect to lower a
+`"high"` contract back to `"standard"` via `/revise`, contradicted by
+decision 7's own text ("never downgraded back to `standard` by anyone")
+and by `architect/commands/create_contract.md`'s instruction ("only
+include risk_level if you are deliberately changing it," worded as if
+downgrading were an intended, ordinary case). `tests/
+test_contract_workflow.py` had a test literally named around a variable
+`lowered`, asserting the downgrade as correct behavior — so this wasn't
+just an implementation slip, it was asserted as intended by the test
+suite itself.
+
+Fixed to match the sibling function's own pattern exactly: `revise_contract`
+now only ever raises `risk_level` to `"high"`; passing `"standard"`
+explicitly (or omitting it) both leave the current value untouched. Test
+renamed/split: the old downgrade case now asserts the value stays `"high"`
+(`test_revise_contract_preserves_risk_level_unless_given`), and a new
+`test_revise_contract_can_still_escalate_risk_level` confirms escalation
+via `/revise` still works. `create_contract.md`'s instruction reworded to
+say "only include risk_level if you are escalating it," not "changing" it.
+
+**Stale-branding and drift cleanup** (no behavioral bug, but the audit's
+whole-repo sweep found real factual inaccuracies a reader — or an agent —
+would trust):
+- `PRINCIPLES.md`'s own title and Purpose section still said "agentCodex
+  Principles" / "the `agentCodex` project" — never rebranded when
+  `README.md`/`AGENTS.md` were (ADR-028). Fixed; historical references to
+  the pre-bootstrap `agentCodex` review (P6's own text) were left as-is
+  since those are accurate history, not branding.
+- `project/README.md` still said "this clone of agentCodex" and its own
+  framework-layer file list omitted `agents/voice.py`,
+  `tools/discovery_engine/`, `templates/voice_module/` — the same gap
+  `AGENTS.md`'s own list had until this file was fixed for it in ADR-033;
+  `project/README.md` was missed at the time. Fixed.
+- `agents/architect/MEMORY.md` — the architect's own persistent long-term
+  memory, loaded into every architect session — still described the
+  pre-bootstrap two-role, no-contracts, no-discovery-engine, no-voice
+  project. Rewritten to describe Tr5-base's actual current shape (reviewer
+  holds both gates, risk_level, generated WORKING_STATE.md, Discovery
+  Engine, voice's provider decoupling) at the same level of summary the
+  original had — not expanded into full documentation, since that's
+  README.md/AGENTS.md/this file's job, not MEMORY.md's.
+- `memory/PROJECT_STATE.md` — same kind of staleness, same fix, for the
+  "Current Project State" doc a session (not just the architect) might
+  read.
+- `memory/CURRENT_STATE.md` — the Discovery Engine's own generated
+  snapshot — was stale relative to the real tree (missing `agents/voice.py`
+  and all of `templates/`) simply because no `/new`/`/revise` had run
+  since ADR-033 landed; this is expected staleness by design (it
+  regenerates on the next real contract), not a bug, but was refreshed
+  here via a direct `run_discovery_scan()` call so the checked-in file
+  matches the checked-in tree right now.
+- `memory/OPEN_TASKS.md` — "Add controlled writes to agents' private
+  memory" was still listed unchecked, but is in fact implemented
+  (`ALLOWED_MEMORY_TARGETS`/`ContractStore.append_memory()`, wired from
+  both review-recording functions' `memory_updates` handling, present
+  since well before this bootstrap). Checked off with a one-line pointer
+  to where; the other three open items were independently verified as
+  still genuinely open and left as-is.
+- `AGENTS.md`'s "repository root does not grow new files" rule was
+  accurate in practice but ambiguous in wording — it never stated whether
+  it meant files, top-level directories, or both, which the audit flagged
+  as worth resolving explicitly rather than leaving implicit. Clarified:
+  the rule is about root-level files; a genuinely new top-level
+  *directory* for a new kind of layer (as `tools/`/`templates/` already
+  were) is the documented alternative, each justified by its own ADR.
+- `chat_architect.py`/`README.md`: `/quit`, `exit`, `quit` were handled as
+  working aliases for `/exit` but were undocumented in both `HELP` and the
+  README's command table. Documented rather than removed — no reason to
+  take away a working, harmless alias.
+
+**Verification**: `python -m pytest -q` — 79/79 passing (2 new: the
+fresh-agent-per-call regression test, and the risk-escalation-still-works
+test alongside the corrected downgrade test). Every other audited area
+(decisions 1, 3, 4, 5, 6, 8, 10, and the 14-point whole-repo hygiene
+sweep) came back confirmed with no discrepancies — not re-summarized here
+since nothing about them changed.

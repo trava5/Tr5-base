@@ -349,10 +349,28 @@ def test_revise_contract_preserves_risk_level_unless_given(tmp_path: Path) -> No
     store.record_architecture_review(
         1, verdict="CHANGES_REQUESTED", findings="still needs work"
     )
-    lowered = store.revise_contract(
+    not_lowered = store.revise_contract(
         1,
         title="Test (revised again)",
         points=[{"assignment": "Point 1 fixed again"}],
         risk_level="standard",
     )
-    assert lowered.risk_level == "standard"
+    # Tr5-base decision 7: "never downgraded back to standard by anyone" —
+    # explicitly passing "standard" here is a no-op, not a downgrade, the
+    # same as the equivalent case in record_architecture_review.
+    assert not_lowered.risk_level == "high"
+
+
+def test_revise_contract_can_still_escalate_risk_level(tmp_path: Path) -> None:
+    store = create_store(tmp_path)
+    store.create_contract("Test", [{"assignment": "Point 1"}], risk_level="standard")
+    store.record_architecture_review(
+        1, verdict="CHANGES_REQUESTED", findings="needs work"
+    )
+    escalated = store.revise_contract(
+        1,
+        title="Test (revised)",
+        points=[{"assignment": "Point 1 fixed"}],
+        risk_level="high",
+    )
+    assert escalated.risk_level == "high"

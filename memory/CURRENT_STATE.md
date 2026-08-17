@@ -52,11 +52,13 @@ Generated automatically before every `create_contract`/`revise_contract` call â€
   - contract_workflow.py
   - git_ops.py
   - pipeline.py
+  - voice.py
 - contracts/
   - .gitkeep
   - README.md
 - memory/
   - CHANGE_LOG.md
+  - CURRENT_STATE.md
   - DECISIONS.md
   - OPEN_TASKS.md
   - PROJECT_STATE.md
@@ -65,6 +67,14 @@ Generated automatically before every `create_contract`/`revise_contract` call â€
   - README.md
 - source/
   - README.md
+- templates/
+  - voice_module/
+    - README.md
+    - __init__.py
+    - audio_io.py
+    - gemini_voice_bridge.py
+    - live_voice_session.py
+  - __init__.py
 - tests/
   - test_agent.py
   - test_agent_profile.py
@@ -72,6 +82,8 @@ Generated automatically before every `create_contract`/`revise_contract` call â€
   - test_discovery_engine.py
   - test_git_ops.py
   - test_pipeline.py
+  - test_voice.py
+  - test_voice_module.py
 - tools/
   - discovery_engine/
     - README.md
@@ -145,12 +157,14 @@ Generated automatically before every `create_contract`/`revise_contract` call â€
 | config.json | agents/reviewer/config.json | Agent Config |
 | runtime | agents/reviewer/runtime | Directory |
 | .gitkeep | agents/reviewer/runtime/.gitkeep | Unknown |
+| voice.py | agents/voice.py | Python Source |
 | chat_architect.py | chat_architect.py | Python Source |
 | contracts | contracts | Directory |
 | .gitkeep | contracts/.gitkeep | Unknown |
 | README.md | contracts/README.md | Markdown Document |
 | memory | memory | Directory |
 | CHANGE_LOG.md | memory/CHANGE_LOG.md | Project Memory |
+| CURRENT_STATE.md | memory/CURRENT_STATE.md | Project Memory |
 | DECISIONS.md | memory/DECISIONS.md | Project Memory |
 | OPEN_TASKS.md | memory/OPEN_TASKS.md | Project Memory |
 | PROJECT_STATE.md | memory/PROJECT_STATE.md | Project Memory |
@@ -160,6 +174,14 @@ Generated automatically before every `create_contract`/`revise_contract` call â€
 | requirements.txt | requirements.txt | Unknown |
 | source | source | Directory |
 | README.md | source/README.md | Markdown Document |
+| templates | templates | Directory |
+| __init__.py | templates/__init__.py | Python Source |
+| voice_module | templates/voice_module | Directory |
+| README.md | templates/voice_module/README.md | Markdown Document |
+| __init__.py | templates/voice_module/__init__.py | Python Source |
+| audio_io.py | templates/voice_module/audio_io.py | Python Source |
+| gemini_voice_bridge.py | templates/voice_module/gemini_voice_bridge.py | Python Source |
+| live_voice_session.py | templates/voice_module/live_voice_session.py | Python Source |
 | tests | tests | Directory |
 | test_agent.py | tests/test_agent.py | Python Source |
 | test_agent_profile.py | tests/test_agent_profile.py | Python Source |
@@ -167,6 +189,8 @@ Generated automatically before every `create_contract`/`revise_contract` call â€
 | test_discovery_engine.py | tests/test_discovery_engine.py | Python Source |
 | test_git_ops.py | tests/test_git_ops.py | Python Source |
 | test_pipeline.py | tests/test_pipeline.py | Python Source |
+| test_voice.py | tests/test_voice.py | Python Source |
+| test_voice_module.py | tests/test_voice_module.py | Python Source |
 | tools | tools | Directory |
 | __init__.py | tools/__init__.py | Python Source |
 | discovery_engine | tools/discovery_engine | Directory |

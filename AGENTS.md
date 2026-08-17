@@ -38,13 +38,19 @@
 - The repository root has exactly one `.py` file, `chat_architect.py` —
   the only way to run the pipeline. Everything else the framework needs is
   a module under `agents/` (see ADR-021).
-- The repository root does not grow new files as the framework grows.
+- The repository root does not grow new **files** as the framework grows.
   `AGENTS.md`, `PRINCIPLES.md`, `README.md`, `AGENTS_SUGGESTIONS.md`,
   `UPDATE_NOTES.md`, `requirements.txt`, `.env`/`.env.example`, and
   `chat_architect.py` are the fixed set. A new piece of framework state
   or config belongs in `memory/` (state, e.g. `TEMPLATE_ORIGINS.md`),
   under `agents/` (code or agent-specific files), or as a new section in
   an existing root `.md` file — never a new top-level file (see ADR-027).
+  This is a rule about root-level *files*, not top-level *directories*: a
+  genuinely new kind of layer the framework needs is a new sibling
+  directory instead (`tools/discovery_engine/` per ADR-031,
+  `templates/voice_module/` per ADR-033 — alongside the pre-existing
+  `agents/`, `memory/`, `contracts/`, `project/`, `source/`), each such
+  addition justified by its own ADR, not a workaround for this rule.
 - Once `project/` holds real code (not just a placeholder), contract work
   is implemented in `project/` by default. Touching the framework layer
   (`agents/*.py`, `chat_architect.py`) or a governance `.md` file

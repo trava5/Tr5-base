@@ -119,7 +119,7 @@ alongside the conversation:
 /status           shows the queue, handoffs, and risk level
 /inbox            shows the architect's inbox
 /help             shows this list again
-/exit             exits
+/exit             exits (aliases: /quit, exit, quit)
 ```
 
 ### Lifecycle

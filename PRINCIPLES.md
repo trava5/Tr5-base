@@ -1,15 +1,17 @@
-# agentCodex Principles
+# Tr5-base Principles
 
 Status: Living Document
 
 ## Purpose
 
-This document collects the operating principles of the `agentCodex` project.
-Principles are adopted from the Tr5 Platform's own `PRINCIPLES.md` where they
-apply, generalized to this project's own architecture (see ADR-005), and
-otherwise added as this project accumulates its own experience. Numbering is
-local to this document and assigned in the order a principle is adopted here
-— it does not necessarily match the source principle's number in Tr5.
+This document collects the operating principles of this project, bootstrapped
+from `agentCodex`'s own `PRINCIPLES.md` (see ADR-005) and further enriched
+with mechanisms proven in the Tr5 Platform (see ADR-028 onward). Principles
+are adopted from either source where they apply, generalized to this
+project's own architecture, and otherwise added as this project accumulates
+its own experience. Numbering is local to this document and assigned in the
+order a principle is adopted here — it does not necessarily match the source
+principle's number in `agentCodex` or Tr5.
 
 A principle exists here because it was agreed as a real, applicable rule for
 this project, not because it sounded generally right in the source material.

@@ -50,5 +50,8 @@ Rules:
 - if `{{TASK}}` is only about editing an existing contract after
   CHANGES_REQUESTED from architecture review, take the stated findings
   into account and return the complete, rewritten content (not just a
-  diff); only include "risk_level" if you are deliberately changing it —
-  omitting it keeps the contract's current value.
+  diff); only include "risk_level" if you are escalating it to `"high"` —
+  omitting it keeps the contract's current value, and including
+  `"standard"` on a contract already `"high"` has no effect (Tr5-base
+  decision 7 — risk_level is never downgraded back to `"standard"` by
+  anyone, including you, even on revision).

@@ -52,7 +52,7 @@ Commands available alongside the conversation:
   /status           shows the contract queue
   /inbox            shows the architect's inbox
   /help             shows this help
-  /exit             exits
+  /exit             exits (aliases: /quit, exit, quit)
 """.strip()
 
 
@@ -68,15 +68,26 @@ def main(project_root: Path = WORKSPACE) -> None:
     except Exception as error:
         print(f"\nCould not sync origin from GIT_REPO: {error}\n")
 
+    # Tr5-base decision 9: the architect is the one role allowed to stay
+    # naturally continuous within a session (persistent memory, one
+    # standing thread) — created once, above, and kept for the whole
+    # session. The reviewer and the programmer get NO carryover, not even
+    # within this same session: `reviewer_factory`/`programmer_factory`
+    # are passed to `agents/pipeline.py` instead of a constructed `Agent`,
+    # so a brand-new thread is created (and closed) for every single call
+    # — every Architecture Review, every Implementation Review, every
+    # implementation — never reused across contracts, and never reused
+    # between one contract's own Architecture Review and its later
+    # Implementation Review either.
+    def reviewer_factory():
+        return create_agent("reviewer", config=config, project_root=project_root)
+
+    def programmer_factory():
+        return create_agent("programmer", config=config, project_root=project_root)
+
     with ExitStack() as stack:
         architect = stack.enter_context(
             create_agent("architect", config=config, project_root=project_root)
-        )
-        reviewer = stack.enter_context(
-            create_agent("reviewer", config=config, project_root=project_root)
-        )
-        programmer = stack.enter_context(
-            create_agent("programmer", config=config, project_root=project_root)
         )
 
         try:
@@ -143,7 +154,11 @@ def main(project_root: Path = WORKSPACE) -> None:
             if raw.startswith("/new "):
                 try:
                     create_contract(
-                        architect, reviewer, programmer, store, raw.split(maxsplit=1)[1]
+                        architect,
+                        reviewer_factory,
+                        programmer_factory,
+                        store,
+                        raw.split(maxsplit=1)[1],
                     )
                 except Exception as error:
                     print(f"\nError while creating the contract: {error}")
@@ -153,7 +168,12 @@ def main(project_root: Path = WORKSPACE) -> None:
                     _, rest = raw.split(maxsplit=1)
                     number_str, task = rest.split(maxsplit=1)
                     revise_contract(
-                        architect, reviewer, programmer, store, int(number_str), task
+                        architect,
+                        reviewer_factory,
+                        programmer_factory,
+                        store,
+                        int(number_str),
+                        task,
                     )
                 except Exception as error:
                     print(f"\nError while revising the contract: {error}")
@@ -161,20 +181,25 @@ def main(project_root: Path = WORKSPACE) -> None:
             if raw == "/work" or raw.startswith("/work "):
                 try:
                     number = int(raw.split(maxsplit=1)[1]) if " " in raw else None
-                    implement_next(programmer, store, number=number)
+                    implement_next(programmer_factory, store, number=number)
                 except Exception as error:
                     print(f"\nError while implementing the contract: {error}")
                 continue
             if raw == "/review" or raw.startswith("/review "):
                 try:
                     number = int(raw.split(maxsplit=1)[1]) if " " in raw else None
-                    run_implementation_review(reviewer, store, number=number)
+                    run_implementation_review(reviewer_factory, store, number=number)
                 except Exception as error:
                     print(f"\nError while reviewing the contract: {error}")
                 continue
             if raw.startswith("/proceed "):
                 try:
-                    proceed(reviewer, programmer, store, int(raw.split(maxsplit=1)[1]))
+                    proceed(
+                        reviewer_factory,
+                        programmer_factory,
+                        store,
+                        int(raw.split(maxsplit=1)[1]),
+                    )
                 except Exception as error:
                     print(f"\nError while resuming the contract: {error}")
                 continue

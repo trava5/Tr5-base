@@ -7,6 +7,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
+from tools.discovery_engine.generate_current_state import (
+    diff_scans,
+    load_snapshot,
+    save_snapshot,
+    scan_repository,
+)
+
 
 ContractStatus = Literal[
     "DRAFT",
@@ -41,9 +48,14 @@ META_RE = re.compile(
 
 ALLOWED_MEMORY_TARGETS = (
     re.compile(r"^memory/[A-Za-z0-9_.-]+\.md$"),
-    re.compile(r"^agents/[A-Za-z0-9_-]+/(MEMORY|WORKING_STATE)\.md$"),
+    re.compile(r"^agents/[A-Za-z0-9_-]+/MEMORY\.md$"),
     re.compile(r"^PRINCIPLES\.md$"),
 )
+# `agents/<agent>/WORKING_STATE.md` is deliberately NOT an allowed
+# memory_updates target (Tr5-base decision 10): it is a generated
+# artifact (see ContractStore.refresh_working_state()), regenerated on
+# every save() from the live contract queue — a manual write here would
+# just be overwritten on the next state change.
 
 
 @dataclass
@@ -259,6 +271,45 @@ class ContractStore:
         contract.updated_at = _timestamp()
         path = self.path_for(contract.number)
         path.write_text(render_contract(contract), encoding="utf-8")
+        self.refresh_working_state()
+        return path
+
+    def render_queue_summary(self) -> str:
+        """Plain-text contract queue: status, risk, handoff, title for
+        every contract. Single source of truth for both the architect's
+        opening briefing (`pipeline.status_text()`) and the generated
+        `WORKING_STATE.md` (`refresh_working_state()`, Tr5-base
+        decision 10) — one place computes this, nothing else duplicates
+        it."""
+        contracts = self.list_contracts()
+        if not contracts:
+            return "No contracts yet."
+        return "\n".join(
+            f"IMPLEMENTATION_CONTRACT_{c.number:04d}: {c.status} (risk: {c.risk_level}) "
+            f"(handed off to {c.handoff_to}) — {c.title}"
+            for c in contracts
+        )
+
+    def refresh_working_state(self) -> Path:
+        """Regenerates `agents/architect/WORKING_STATE.md` from the live
+        contract queue (Tr5-base decision 10) — a generated artifact,
+        never agent-authored. Called automatically by `save()`, so it can
+        never drift the way an agent-proposed `memory_update` to this path
+        could (that path is disallowed now — see `ALLOWED_MEMORY_TARGETS`).
+        Only the architect has this file loaded (`load_working_state:
+        true`); the reviewer and programmer don't (Tr5-base decision 9 —
+        they carry no standing state between fresh-thread calls, so a
+        working-state view would have nothing to serve)."""
+        path = self.project_root / "agents" / "architect" / "WORKING_STATE.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            "# Current Working State\n\n"
+            "Generated automatically from the live contract queue on every "
+            "state change (Tr5-base decision 10) — do not edit by hand, "
+            "edits are overwritten on the next transition.\n\n"
+            f"{self.render_queue_summary()}\n",
+            encoding="utf-8",
+        )
         return path
 
     def load(self, number: int) -> Contract:
@@ -408,7 +459,47 @@ class ContractStore:
         contract.assigned_to = agent
         contract.handoff_to = agent
         self.save(contract)
+        self._save_discovery_snapshot(number, "pre")
         return contract
+
+    def _discovery_snapshot_path(self, number: int, stage: str) -> Path:
+        return self.project_root / "contracts" / ".discovery" / f"{number:04d}_{stage}.json"
+
+    def _save_discovery_snapshot(self, number: int, stage: str) -> None:
+        """Snapshots the repository for later diffing (Tr5-base decision
+        3) — "pre" when the programmer claims a contract, "post" when it
+        hands back to the reviewer. Best-effort: a scan/write failure must
+        never block the actual contract workflow over a discovery-tool
+        problem, so it is swallowed here — `out_of_scope_diff()` falls
+        back to `None` (no snapshot available) rather than raising.
+        """
+        try:
+            artifacts = scan_repository(self.project_root)
+            save_snapshot(self._discovery_snapshot_path(number, stage), artifacts)
+        except OSError:
+            pass
+
+    def out_of_scope_diff(self, number: int) -> dict[str, list[str]] | None:
+        """Diffs the "pre"/"post" discovery snapshots for a contract
+        (Tr5-base decision 3), feeding the reviewer's Implementation
+        Review Out of Scope check. Returns `None` if either snapshot is
+        missing (e.g. `claim()` ran before this feature existed, or a
+        snapshot failed to save) — the caller falls back to asking the
+        reviewer to check manually rather than failing the review.
+
+        The contract's own `.md` file is excluded from "changed" — it
+        always changes between the two snapshots (the programmer's own
+        notes are written into it), which is expected bookkeeping, not a
+        signal the reviewer needs to see repeated on every single review.
+        """
+        pre_path = self._discovery_snapshot_path(number, "pre")
+        post_path = self._discovery_snapshot_path(number, "post")
+        if not pre_path.is_file() or not post_path.is_file():
+            return None
+        diff = diff_scans(load_snapshot(pre_path), load_snapshot(post_path))
+        own_contract_path = self.path_for(number).relative_to(self.project_root).as_posix()
+        diff["changed"] = [path for path in diff["changed"] if path != own_contract_path]
+        return diff
 
     def record_programmer_result(
         self,
@@ -458,6 +549,7 @@ class ContractStore:
         contract.assigned_to = to_agent
         contract.handoff_to = to_agent
         self.save(contract)
+        self._save_discovery_snapshot(number, "post")
         self.notify(
             to_agent=to_agent,
             from_agent=from_agent,
@@ -571,7 +663,7 @@ class ContractStore:
         if not any(pattern.fullmatch(relative) for pattern in ALLOWED_MEMORY_TARGETS):
             raise ValueError(
                 f"Disallowed memory target {update.path!r}. "
-                "Only memory/*.md, agents/*/(MEMORY|WORKING_STATE).md, and "
+                "Only memory/*.md, agents/*/MEMORY.md, and "
                 "PRINCIPLES.md are allowed."
             )
         text = update.text.strip()

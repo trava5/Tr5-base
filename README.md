@@ -191,11 +191,37 @@ may propose controlled writes to:
 ```text
 memory/*.md
 agents/<agent>/MEMORY.md
-agents/<agent>/WORKING_STATE.md
 PRINCIPLES.md
 ```
 
-The host code rejects any other target.
+The host code rejects any other target — including
+`agents/<agent>/WORKING_STATE.md`: the architect's own is a generated
+artifact, not something any agent proposes a write to (see "Discovery
+Engine and generated state" below).
+
+## Discovery Engine and generated state
+
+`tools/discovery_engine/` (ported from `Tr5-platform`, see ADR-031) scans
+the repository and classifies what it finds, including this template's
+own governance/agent files as their own category. Two places consume it
+(Tr5-base decision 3):
+
+- `/new`/`/revise` scan the repository first and (re)write
+  `memory/CURRENT_STATE.md` before the architect drafts anything — so
+  "current_state" reflects what actually exists, not a guess.
+- The programmer claiming a contract snapshots the repository; handing
+  back to the reviewer snapshots it again. The reviewer's Implementation
+  Review is given the diff between the two (added/removed/changed files,
+  excluding the contract's own file) as a mechanical starting point for
+  the Out of Scope check, instead of eyeballing `git diff` itself.
+
+`agents/architect/WORKING_STATE.md` is likewise generated, not
+agent-authored (Tr5-base decision 10): `ContractStore.save()` regenerates
+it from the live contract queue on every state transition, so it can
+never drift the way a manually-proposed memory update could. Only the
+architect has it loaded (`load_working_state: true`); the reviewer and
+programmer don't (Tr5-base decision 9 — no standing state to track
+between fresh-thread calls).
 
 ## Permissions
 

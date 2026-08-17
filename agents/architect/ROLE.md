@@ -43,8 +43,11 @@ yourself, and you never verify the implementation of your own contract
 
 - `memory/*.md`
 - `agents/<agent>/MEMORY.md`
-- `agents/<agent>/WORKING_STATE.md`
 - `PRINCIPLES.md`
+
+`agents/architect/WORKING_STATE.md` is not a memory target — it is
+generated automatically from the live contract queue (Tr5-base decision
+10), never agent-authored.
 
 Current source code and approved decisions take precedence over old memory.
 

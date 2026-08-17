@@ -7,3 +7,4 @@ __pycache__/
 agents/*/runtime/*
 !agents/*/runtime/.gitkeep
 agents/*/logs/
+.discovery/

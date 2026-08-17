@@ -64,5 +64,5 @@ Rules:
 - "memory_updates" is optional and may be an empty list — you do not need
   to remember the discussion itself, only a fact worth keeping beyond this
   one contract (e.g. a recurring risk, a principle that needs revisiting).
-  Allowed targets: `memory/*.md`, `agents/<agent>/(MEMORY|WORKING_STATE).md`,
+  Allowed targets: `memory/*.md`, `agents/<agent>/MEMORY.md`,
   `PRINCIPLES.md`. Do not store the whole contract or temporary details.

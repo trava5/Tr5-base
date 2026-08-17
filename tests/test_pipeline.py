@@ -15,9 +15,11 @@ class ScriptedAgent:
     def __init__(self, responses: dict[str, list[str]]) -> None:
         self.responses = responses
         self.calls: list[str] = []
+        self.call_variables: list[dict[str, str]] = []
 
     def run_command(self, command_name: str, **variables: str) -> str:
         self.calls.append(command_name)
+        self.call_variables.append(variables)
         queue = self.responses[command_name]
         return queue.pop(0)
 
@@ -395,3 +397,112 @@ def test_proceed_reports_no_pause_point_for_unrelated_status(
     assert "not at a pause point" in capsys.readouterr().out
     assert reviewer.calls == []
     assert programmer.calls == []
+
+
+def test_create_contract_runs_discovery_scan_first(tmp_path: Path) -> None:
+    store = create_store(tmp_path)
+    architect = ScriptedAgent(
+        {
+            "create_contract": [
+                json.dumps({"title": "Test", "points": [{"assignment": "Do X"}]})
+            ],
+        }
+    )
+    reviewer = ScriptedAgent(
+        {
+            "architecture_review": [
+                json.dumps({"verdict": "CHANGES_REQUESTED", "findings": "no"})
+            ],
+        }
+    )
+    programmer = ScriptedAgent({})
+
+    pipeline.create_contract(architect, reviewer, programmer, store, "Add X")
+
+    current_state = tmp_path / "memory" / "CURRENT_STATE.md"
+    assert current_state.is_file()
+    assert "# Current State" in current_state.read_text(encoding="utf-8")
+
+
+def test_run_implementation_review_passes_discovery_diff_to_reviewer(
+    tmp_path: Path,
+) -> None:
+    store = create_store(tmp_path)
+    store.create_contract("Test", [{"assignment": "Do X"}])
+    store.record_architecture_review(1, verdict="ACCEPTED", findings="fine")
+    store.claim(1)
+    (tmp_path / "extra_file.py").write_text("x = 1\n", encoding="utf-8")
+    store.record_programmer_result(
+        1,
+        summary="done",
+        notes=[{"point": 1, "note": "did it", "files": ["extra_file.py"], "tests": []}],
+    )
+
+    reviewer = ScriptedAgent(
+        {
+            "review_contract": [
+                json.dumps(
+                    {
+                        "approved": True,
+                        "summary": "Good",
+                        "reviews": [
+                            {"point": 1, "status": "APPROVED", "review": "ok"}
+                        ],
+                        "out_of_scope_ok": True,
+                        "out_of_scope_findings": "extra_file.py matches point 1.",
+                        "memory_updates": [],
+                    }
+                )
+            ],
+        }
+    )
+
+    pipeline.run_implementation_review(reviewer, store, number=1)
+
+    diff_text = reviewer.call_variables[0]["out_of_scope_diff"]
+    assert "extra_file.py" in diff_text
+
+
+def test_run_implementation_review_handles_missing_snapshot_gracefully(
+    tmp_path: Path,
+) -> None:
+    # A contract claimed/finished without ever going through claim()'s
+    # snapshot hook (e.g. state seeded directly, as in this test) should
+    # not crash implementation review — it just tells the reviewer to
+    # check manually.
+    store = create_store(tmp_path)
+    store.create_contract("Test", [{"assignment": "Do X"}])
+    store.record_architecture_review(1, verdict="ACCEPTED", findings="fine")
+    store.claim(1)
+    # Remove the snapshot claim() just wrote, to simulate it being absent.
+    for snapshot in (tmp_path / "contracts" / ".discovery").glob("*.json"):
+        snapshot.unlink()
+    store.record_programmer_result(
+        1,
+        summary="done",
+        notes=[{"point": 1, "note": "did it", "files": [], "tests": []}],
+    )
+
+    reviewer = ScriptedAgent(
+        {
+            "review_contract": [
+                json.dumps(
+                    {
+                        "approved": True,
+                        "summary": "Good",
+                        "reviews": [
+                            {"point": 1, "status": "APPROVED", "review": "ok"}
+                        ],
+                        "out_of_scope_ok": True,
+                        "out_of_scope_findings": "Checked manually.",
+                        "memory_updates": [],
+                    }
+                )
+            ],
+        }
+    )
+
+    pipeline.run_implementation_review(reviewer, store, number=1)
+
+    diff_text = reviewer.call_variables[0]["out_of_scope_diff"]
+    assert "No discovery snapshot available" in diff_text

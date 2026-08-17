@@ -5,6 +5,7 @@ from pathlib import Path
 from .agent_profile import Agent
 from .contract_workflow import Contract, ContractStore, MemoryUpdate, parse_json_response
 from .git_ops import commit_and_push
+from tools.discovery_engine.generate_current_state import render_diff_markdown, run_discovery_scan
 
 
 def create_contract(
@@ -14,6 +15,11 @@ def create_contract(
     store: ContractStore,
     task: str,
 ) -> None:
+    """Runs a discovery scan before the architect drafts anything (Tr5-base
+    decision 3's "structural trigger") — memory/CURRENT_STATE.md is freshly
+    regenerated, so `create_contract.md`'s instruction to read it before
+    filling in "current_state" reads current data, not something stale."""
+    run_discovery_scan(store.project_root)
     response = architect.run_command("create_contract", task=task)
     data = parse_json_response(response)
     contract = store.create_contract(
@@ -41,6 +47,7 @@ def revise_contract(
     number: int,
     task: str,
 ) -> None:
+    run_discovery_scan(store.project_root)
     response = architect.run_command("create_contract", task=task)
     data = parse_json_response(response)
     store.revise_contract(
@@ -256,7 +263,11 @@ def run_implementation_review(
     reviewer: Agent, store: ContractStore, *, number: int | None = None
 ) -> Contract | None:
     """Runs implementation review via the reviewer agent (Tr5-base decision
-    1 — the reviewer holds both review gates, not the architect)."""
+    1 — the reviewer holds both review gates, not the architect). Feeds it
+    the discovery-engine diff between the pre-implementation and
+    post-implementation snapshots (Tr5-base decision 3), so the Out of
+    Scope check is grounded in a mechanical added/removed/changed list
+    instead of the reviewer eyeballing `git diff` itself."""
     if number is None:
         queued = store.next_for_implementation_review()
         if queued is None:
@@ -264,11 +275,20 @@ def run_implementation_review(
             return None
         number = queued.number
 
+    diff = store.out_of_scope_diff(number)
+    diff_text = (
+        render_diff_markdown(diff)
+        if diff is not None
+        else "No discovery snapshot available for this contract — check the "
+        "actual diff yourself (e.g. `git diff`)."
+    )
+
     path = store.path_for(number)
     response = reviewer.run_command(
         "review_contract",
         contract_path=path.relative_to(store.project_root).as_posix(),
         contract_content=path.read_text(encoding="utf-8"),
+        out_of_scope_diff=diff_text,
     )
     data = parse_json_response(response)
     updates = [
@@ -316,15 +336,11 @@ def show_inbox(project_root: Path, agent: str) -> None:
 
 def status_text(store: ContractStore) -> str:
     """Plain-text contract queue, for grounding the architect's opening
-    greeting in real data instead of a guess (see ADR-021)."""
-    contracts = store.list_contracts()
-    if not contracts:
-        return "No contracts yet."
-    return "\n".join(
-        f"IMPLEMENTATION_CONTRACT_{c.number:04d}: {c.status} (risk: {c.risk_level}) "
-        f"(handed off to {c.handoff_to}) — {c.title}"
-        for c in contracts
-    )
+    greeting in real data instead of a guess (see ADR-021). Delegates to
+    `ContractStore.render_queue_summary()`, the same rendering the
+    generated `WORKING_STATE.md` uses (Tr5-base decision 10) — one place
+    computes this."""
+    return store.render_queue_summary()
 
 
 def opening_briefing(store: ContractStore, project_root: Path) -> str:

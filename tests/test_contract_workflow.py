@@ -204,6 +204,95 @@ def test_parse_fenced_json() -> None:
     assert data["approved"] is True
 
 
+def test_save_generates_working_state_md(tmp_path: Path) -> None:
+    store = create_store(tmp_path)
+    store.create_contract("Test", [{"assignment": "Point 1"}])
+
+    working_state = (tmp_path / "agents" / "architect" / "WORKING_STATE.md").read_text(
+        encoding="utf-8"
+    )
+    assert "IMPLEMENTATION_CONTRACT_0001" in working_state
+    assert "DRAFT" in working_state
+    assert "Generated automatically" in working_state
+
+
+def test_working_state_md_reflects_the_latest_transition(tmp_path: Path) -> None:
+    store = create_store(tmp_path)
+    store.create_contract("Test", [{"assignment": "Point 1"}])
+    store.record_architecture_review(1, verdict="ACCEPTED", findings="fine")
+
+    working_state = (tmp_path / "agents" / "architect" / "WORKING_STATE.md").read_text(
+        encoding="utf-8"
+    )
+    assert "READY_FOR_PROGRAMMER" in working_state
+    assert "DRAFT" not in working_state
+
+
+def test_working_state_md_is_not_a_valid_memory_update_target(tmp_path: Path) -> None:
+    store = create_store(tmp_path)
+    with pytest.raises(ValueError, match="Disallowed memory target"):
+        store.append_memory(
+            MemoryUpdate(
+                path="agents/architect/WORKING_STATE.md", text="manual note"
+            ),
+            source="TEST",
+        )
+
+
+def test_claim_saves_pre_discovery_snapshot(tmp_path: Path) -> None:
+    store = create_store(tmp_path)
+    store.create_contract("Test", [{"assignment": "Point 1"}])
+    store.record_architecture_review(1, verdict="ACCEPTED", findings="fine")
+
+    store.claim(1)
+
+    assert (tmp_path / "contracts" / ".discovery" / "0001_pre.json").is_file()
+
+
+def test_out_of_scope_diff_reports_files_touched_between_claim_and_result(
+    tmp_path: Path,
+) -> None:
+    store = create_store(tmp_path)
+    store.create_contract("Test", [{"assignment": "Point 1"}])
+    store.record_architecture_review(1, verdict="ACCEPTED", findings="fine")
+    store.claim(1)
+
+    (tmp_path / "new_module.py").write_text("x = 1\n", encoding="utf-8")
+
+    store.record_programmer_result(
+        1,
+        summary="done",
+        notes=[{"point": 1, "note": "did it", "files": ["new_module.py"], "tests": []}],
+    )
+
+    diff = store.out_of_scope_diff(1)
+    assert diff is not None
+    assert "new_module.py" in diff["added"]
+
+
+def test_out_of_scope_diff_excludes_the_contracts_own_file(tmp_path: Path) -> None:
+    store = create_store(tmp_path)
+    store.create_contract("Test", [{"assignment": "Point 1"}])
+    store.record_architecture_review(1, verdict="ACCEPTED", findings="fine")
+    store.claim(1)
+    store.record_programmer_result(
+        1,
+        summary="done",
+        notes=[{"point": 1, "note": "did it", "files": [], "tests": []}],
+    )
+
+    diff = store.out_of_scope_diff(1)
+    assert diff is not None
+    assert "contracts/IMPLEMENTATION_CONTRACT_0001.md" not in diff["changed"]
+
+
+def test_out_of_scope_diff_returns_none_without_snapshots(tmp_path: Path) -> None:
+    store = create_store(tmp_path)
+    store.create_contract("Test", [{"assignment": "Point 1"}])
+
+    assert store.out_of_scope_diff(1) is None
+
+
 def test_create_contract_defaults_to_standard_risk(tmp_path: Path) -> None:
     store = create_store(tmp_path)
     contract = store.create_contract("Test", [{"assignment": "Point 1"}])

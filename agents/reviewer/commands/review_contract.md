@@ -17,12 +17,25 @@ the implementation against what was actually accepted, not only the
 original point text in isolation; if those findings clarified or narrowed
 a point, that clarification is part of the requirement.
 
-Also check Out of Scope: compare the actual diff/changed files against the
-contract's points — did the programmer touch anything beyond what the
-points call for (extra files, unrelated refactors, scope creep)? This is a
-separate check from per-point approval; an unexplained out-of-scope change
-is a defect on its own even if every point is otherwise done correctly.
-Return only valid JSON:
+Also check Out of Scope. The Discovery Engine diffed the repository from
+right before the programmer claimed this contract to right after it
+handed back (Tr5-base decision 3), excluding the contract file itself:
+
+<discovery_diff>
+{{OUT_OF_SCOPE_DIFF}}
+</discovery_diff>
+
+Compare this against the contract's points — did the programmer touch
+anything beyond what the points call for (extra files, unrelated
+refactors, scope creep)? Treat this as a mechanical starting point, not a
+substitute for reading the files themselves — a file can appear in
+"changed" for a legitimate, in-scope reason (e.g. an import touched by a
+required change), so still check content, not just the file list. If no
+snapshot was available, say so in "out_of_scope_findings" and check the
+actual diff yourself instead (e.g. `git diff`). This is a separate check
+from per-point approval; an unexplained out-of-scope change is a defect on
+its own even if every point is otherwise done correctly. Return only valid
+JSON:
 
 {
   "approved": true,

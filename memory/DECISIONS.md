@@ -1061,3 +1061,108 @@ risk branch to know when not to).
   ADR-028: Discovery Engine and generated `WORKING_STATE.md` (Phase 4,
   still independent of this one); new principles and the Backlog section
   (Phase 6); voice (Phase 7).
+
+## ADR-031: Discovery Engine ported from `Tr5-platform`; `WORKING_STATE.md` becomes generated
+
+Tr5-base decisions 3 and 10 (Phase 4 of the implementation plan
+referenced in ADR-028). Supersedes ADR-012's deferral ("Discovery Engine
+deferred for lack of a concrete case") — the case now exists,
+`Tr5-platform`'s own working implementation, ported here — and the
+Discovery Engine half of ADR-007/ADR-005's "Tr5 tooling this repository
+doesn't have" reasoning: it does now.
+
+- New `tools/` top-level package (a new kind of layer this repository
+  did not have before — the first concrete use of the `tools/` pattern
+  ADR-007 rejected for lack of need). `tools/discovery_engine/
+  generate_current_state.py` ported from `Tr5-platform`'s own
+  `tools/discovery_engine/generate_current_state.py`, kept close to the
+  original (gitignore-aware recursive scan, `.git/` always excluded,
+  deterministic Markdown rendering) but with real changes:
+  - `classify_artifact()` takes a `relative_path` string instead of a
+    filesystem `Path`, and recognizes this template's own governance/
+    agent-memory files as their own category — `Agent Memory`, `Agent
+    Working State`, `Agent Role`, `Agent Commands`, `Agent Inbox`,
+    `Agent Config`, `Agent Command Template`, `Implementation Contract`,
+    `Project Memory`, `Governance Document` — instead of everything
+    falling into generic `Markdown Document`/`JSON Document` (decision
+    3's "extended classification").
+  - Every file artifact now carries a sha256 `content_hash` (`None` for
+    directories) — not shown in the rendered Markdown, but the basis for
+    the new diff mode: `save_snapshot()`/`load_snapshot()` (a scan
+    serialized to JSON) and `diff_scans()` (added/removed/changed file
+    paths between two scans, by path and hash) plus
+    `render_diff_markdown()` for embedding the result in a prompt.
+  - Output moved from repository root (`TR5_CURRENT_STATE.md` in
+    `Tr5-platform`) to `memory/CURRENT_STATE.md` — this repository's own
+    root file set is deliberately fixed (`AGENTS.md`, ADR-027), and
+    `memory/` is where `AGENTS.md` already says new framework state
+    belongs (the same place `TEMPLATE_ORIGINS.md` lives).
+  - `run_discovery_scan()` is the new single entry point wiring scan +
+    render + save together — the "structural trigger."
+- `agents/pipeline.py`: `create_contract()`/`revise_contract()` call
+  `run_discovery_scan()` as their first action, before the architect
+  drafts anything — `memory/CURRENT_STATE.md` is always fresh by the
+  time `create_contract.md`'s new instruction tells the architect to
+  read it. `run_implementation_review()` calls
+  `store.out_of_scope_diff(number)` and renders it into a new
+  `{{OUT_OF_SCOPE_DIFF}}` variable for `review_contract.md`, replacing
+  the vague "compare the actual diff" instruction with a concrete,
+  mechanically-produced added/removed/changed list (falls back to "no
+  snapshot available, check yourself" if snapshots are missing — never
+  blocks the review).
+- `agents/contract_workflow.py`: `ContractStore.claim()` saves a "pre"
+  discovery snapshot after claiming; `record_programmer_result()` saves
+  a "post" snapshot after handing back to the reviewer. Both live at
+  `contracts/.discovery/<NNNN>_{pre,post}.json` — gitignored (`.discovery/`
+  added to `.gitignore`; matched by bare directory name, the same
+  simplified model the engine's own `.gitignore` parser uses, same as
+  the existing `.idea/` entry), disposable working data, not permanent
+  history. Snapshot save is best-effort (an `OSError` is swallowed, not
+  raised) — a discovery-tool problem must never block the actual
+  contract workflow. New `out_of_scope_diff(number)` diffs the pair,
+  returning `None` if either is missing, and excludes the contract's own
+  `.md` file from "changed" — it always changes between the two
+  snapshots (the programmer's notes are written into it), which is
+  expected bookkeeping, not an out-of-scope signal worth repeating on
+  every single review.
+- `ContractStore.save()` — the single write path every mutating method
+  already funnels through — now also calls the new
+  `refresh_working_state()`, which regenerates
+  `agents/architect/WORKING_STATE.md` from a new
+  `render_queue_summary()` (the same rendering `pipeline.status_text()`
+  used to compute inline — that function now just delegates to
+  `store.render_queue_summary()`, one source of truth instead of two).
+  This replaces the previous mechanism (an agent optionally proposing a
+  `memory_update` onto that path) with unconditional generation on every
+  state transition (decision 10) — it structurally cannot drift, the way
+  a discipline-dependent proposal could.
+  `agents/<agent>/WORKING_STATE.md` is removed from
+  `ALLOWED_MEMORY_TARGETS` (was `agents/*/(MEMORY|WORKING_STATE).md`, now
+  `agents/*/MEMORY.md` only) — writing there via `memory_updates` would
+  just be overwritten on the next `save()`, for any of the three agents,
+  not only the architect. `agents/reviewer/WORKING_STATE.md` and
+  `agents/programmer/WORKING_STATE.md` (already unloaded since `CONTRACT
+  0002`/ADR-029's `load_working_state: false`) are deleted as vestigial —
+  never loaded, never a valid write target, never generated for those
+  two roles.
+- `ROLE.md`/`COMMANDS.md`/command templates and `README.md` updated to
+  match: the "Allowed memory targets" lists no longer mention
+  `WORKING_STATE.md`; a new README "Discovery Engine and generated
+  state" section explains both wirings.
+- Verification: `python -m pytest -q` — 64/64 passing. 11 new tests for
+  the discovery engine module itself (governance classification, generic
+  classification, gitignore/`.git` exclusion, content hashing,
+  `render_markdown` shape, `run_discovery_scan` writes the file,
+  snapshot round-trip, `diff_scans` added/removed/changed, `diff_scans`
+  excludes directories, `render_diff_markdown` no-changes and
+  all-categories cases). 7 new tests at the `contract_workflow.py`
+  level (`WORKING_STATE.md` generated on save and reflects the latest
+  transition, `WORKING_STATE.md` rejected as a memory target, `claim()`
+  saves a pre-snapshot, `out_of_scope_diff` reports a touched file,
+  excludes the contract's own file, returns `None` without snapshots).
+  3 new tests at the pipeline level (`create_contract` writes
+  `memory/CURRENT_STATE.md` first, `run_implementation_review` passes
+  the rendered diff to the reviewer, and handles a missing snapshot
+  gracefully).
+- Deliberately deferred: new principles and the Backlog section (Phase
+  6); voice (Phase 7).

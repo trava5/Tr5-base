@@ -188,6 +188,8 @@ def review_next(
         approved=bool(data["approved"]),
         summary=str(data["summary"]),
         reviews=list(data["reviews"]),
+        out_of_scope_ok=bool(data["out_of_scope_ok"]),
+        out_of_scope_findings=str(data["out_of_scope_findings"]),
         memory_updates=updates,
     )
     print(

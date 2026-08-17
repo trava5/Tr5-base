@@ -76,6 +76,8 @@ def test_contract_full_cycle(tmp_path: Path) -> None:
             {"point": 1, "status": "APPROVED", "review": "Implementation matches."},
             {"point": 2, "status": "APPROVED", "review": "Documentation matches."},
         ],
+        out_of_scope_ok=True,
+        out_of_scope_findings="Diff only touches module.py and README.md, both in scope.",
         memory_updates=[
             MemoryUpdate(
                 path="memory/DECISIONS.md",
@@ -173,6 +175,8 @@ def test_review_requires_every_point(tmp_path: Path) -> None:
             reviews=[
                 {"point": 1, "status": "APPROVED", "review": "OK"},
             ],
+            out_of_scope_ok=True,
+            out_of_scope_findings="No extra files touched.",
         )
 
 

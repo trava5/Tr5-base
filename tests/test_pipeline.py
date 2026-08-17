@@ -72,6 +72,8 @@ def test_create_contract_chains_through_to_implementation_review(
                         "reviews": [
                             {"point": 1, "status": "APPROVED", "review": "ok"}
                         ],
+                        "out_of_scope_ok": True,
+                        "out_of_scope_findings": "Only a.py touched, matches point 1.",
                         "memory_updates": [],
                     }
                 )
@@ -135,6 +137,8 @@ def test_commit_approved_contract_commits_with_implemented_suffix(
         approved=True,
         summary="good",
         reviews=[{"point": 1, "status": "APPROVED", "review": "ok"}],
+        out_of_scope_ok=True,
+        out_of_scope_findings="No extra files touched.",
     )
 
     pipeline.commit_approved_contract(store, 1)
@@ -215,6 +219,8 @@ def test_create_contract_stops_after_changes_requested_implementation_review(
                                 "review": "missing test",
                             }
                         ],
+                        "out_of_scope_ok": True,
+                        "out_of_scope_findings": "No extra files touched.",
                     }
                 )
             ],

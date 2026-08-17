@@ -89,13 +89,14 @@ alongside the conversation:
 /new <topic>       architect creates IMPLEMENTATION_CONTRACT_NNNN.md (DRAFT);
                   from there the pipeline runs automatically (architecture
                   review, and if ACCEPTED, implementation and implementation
-                  review too) and stops once it returns to the architect
+                  review too, both by the reviewer) and stops once it
+                  returns to the architect/owner
 /revise <n> <topic> architect rewrites the contract's requirements after
                   CHANGES_REQUESTED from architecture review, resubmits it
                   for review, and continues automatically the same way
 /work [n]         manual override: programmer picks up contract <n> (or the
                   next ready one) — not needed in the normal flow
-/review [n]       manual override: architect runs implementation review on
+/review [n]       manual override: reviewer runs implementation review on
                   contract <n> (or the next ready one) — not needed in the
                   normal flow
 /commit <n>       after discussing the implementation review result with
@@ -109,12 +110,16 @@ alongside the conversation:
 
 ### Lifecycle
 
-Three roles, two review gates, after the Tr5 Platform Implementation
-Contract pattern (Architect / Architecture Reviewer / Implementation
-Agent): the contract is first assessed by an INDEPENDENT reviewer, before
-the programmer ever sees it (Architecture Review); after implementation the
-architect assesses the result (Implementation Review). The architect never
-approves its own proposal.
+Three roles, both review gates held by one INDEPENDENT reviewer (Tr5-base
+decision 1): the contract is assessed before the programmer ever sees it
+(Architecture Review), and again after implementation, against the
+Acceptance Criteria of each point plus an explicit Out of Scope check —
+did the programmer touch anything beyond what the contract's points call
+for (Implementation Review). The architect, who wrote the contract, never
+reviews its own proposal or the implementation of it; once implementation
+review is complete, the architect (with the owner) looks only at how the
+result fits the broader plan and what to do next — a non-gating pass, not
+a second approval.
 
 Owner approval happens once, at `/new`/`/revise` — from there the pipeline
 runs unattended (architecture review → programmer → implementation review)
@@ -139,10 +144,10 @@ architect (create_contract)
       ↓                                      REJECTED → REJECTED (end, permanent record) → architect
 programmer
   IN_PROGRESS
-  READY_FOR_ARCHITECT_REVIEW
-      ↓  implementation review (architect)
-architect
-  APPROVED → owner
+  READY_FOR_REVIEWER
+      ↓  implementation review (reviewer) — per-point + Out of Scope check
+reviewer
+  APPROVED → owner/architect (non-gating pass)
   CHANGES_REQUESTED → programmer
 ```
 
@@ -162,8 +167,8 @@ Every contract contains (structure per the Tr5 Document Standard):
 Notifications are written to `agents/<agent>/INBOX.md`. Once approved, a
 message is written to `contracts/OWNER_INBOX.md`.
 
-During review the architect (implementation review) or reviewer
-(architecture review) may propose controlled writes to:
+During review the reviewer (architecture review or implementation review)
+may propose controlled writes to:
 
 ```text
 memory/*.md
@@ -190,13 +195,13 @@ The default workflow uses:
 
 ## Roles
 
-Mapping onto the Tr5 Platform Document Standard (Architect / Architecture
-Reviewer / Implementation Agent):
+Mapping onto the Tr5 Platform Document Standard (Architect / Reviewer /
+Implementation Agent; Tr5-base decision 1 gives the reviewer both gates):
 
 | Agent | Tr5 role | Responsibility |
 | --- | --- | --- |
-| `architect` | Architect | Drafts contracts (Purpose/Intent/points); runs implementation review after implementation. |
-| `reviewer` | Architecture Reviewer | Independently assesses the contract BEFORE implementation; the architect never approves its own proposal. |
+| `architect` | Architect | Drafts contracts (Purpose/Intent/points); after implementation review, looks at how the approved result fits the plan (non-gating). |
+| `reviewer` | Reviewer | Independently assesses the contract BEFORE implementation (architecture review) and the result AFTER implementation, including an Out of Scope check; the architect never approves its own proposal or its own implementation. |
 | `programmer` | Implementation Agent | Implements exclusively what the contract specifies after architecture review `ACCEPTED`. |
 
 ## Tests

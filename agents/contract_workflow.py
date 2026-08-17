@@ -14,7 +14,9 @@ ContractStatus = Literal[
     "REJECTED",
     "READY_FOR_PROGRAMMER",
     "IN_PROGRESS",
-    "READY_FOR_ARCHITECT_REVIEW",
+    # Renamed from READY_FOR_ARCHITECT_REVIEW (Tr5-base decision 1): the
+    # reviewer now holds Implementation Review, never the architect.
+    "READY_FOR_REVIEWER",
     "CHANGES_REQUESTED",
     "APPROVED",
 ]
@@ -22,6 +24,14 @@ ContractStatus = Literal[
 PointStatus = Literal["PENDING", "IMPLEMENTED", "APPROVED", "CHANGES_REQUESTED"]
 
 ArchitectureVerdict = Literal["ACCEPTED", "REJECTED", "CHANGES_REQUESTED"]
+
+# Per-contract risk flag (Tr5-base decision 7): "standard" auto-chains the
+# pipeline through both review gates with no pause; "high" (real
+# credentials/external systems/native-hardware libraries) pauses for the
+# owner at each checkpoint instead. Set by the architect at creation, may
+# be escalated (never downgraded) by the reviewer during architecture
+# review.
+RiskLevel = Literal["standard", "high"]
 
 CONTRACT_FILE_RE = re.compile(r"^IMPLEMENTATION_CONTRACT_(\d{4})\.md$")
 META_RE = re.compile(
@@ -42,9 +52,17 @@ class ContractPoint:
     assignment: str
     acceptance_criteria: list[str] = field(default_factory=list)
     programmer_note: str = ""
+    programmer_note_author: str = ""
+    programmer_note_at: str = ""
     programmer_files: list[str] = field(default_factory=list)
     programmer_tests: list[str] = field(default_factory=list)
-    architect_review: str = ""
+    # Implementation Review finding for this point. Renamed from
+    # `architect_review` (Tr5-base decision 1): the reviewer holds both
+    # review gates now, the architect no longer reviews its own contract's
+    # implementation.
+    reviewer_note: str = ""
+    reviewer_note_author: str = ""
+    reviewer_note_at: str = ""
     status: PointStatus = "PENDING"
 
 
@@ -61,6 +79,9 @@ class Contract:
     points: list[ContractPoint]
     implementer: str = "programmer"
     reviewer: str = "reviewer"
+    # Tr5-base decision 7: gates full auto-chaining ("standard") vs.
+    # step-by-step owner pacing ("high") in the pipeline layer.
+    risk_level: RiskLevel = "standard"
     # Why (human-readable architectural intent) — separate from the What (points).
     purpose: str = ""
     intent: str = ""
@@ -86,21 +107,27 @@ class MemoryUpdate:
 class ContractStore:
     """File-backed contract queue and handoff between agents.
 
-    Pipeline (two review gates, three roles, after the Tr5 Implementation
-    Contract pattern: Architect / Architecture Reviewer / Implementation Agent):
+    Pipeline (two review gates, three roles; Tr5-base decision 1 changes
+    who holds the second gate relative to bod_zero's original design —
+    the reviewer now holds both, never the architect):
 
-        create_contract (architect)  -> DRAFT                (-> reviewer)
-        record_architecture_review (reviewer):
+        create_contract (architect+owner) -> DRAFT            (-> reviewer)
+        record_architecture_review (reviewer, may escalate risk_level):
             ACCEPTED             -> READY_FOR_PROGRAMMER      (-> implementer)
             CHANGES_REQUESTED    -> ARCHITECTURE_CHANGES_REQUESTED (-> architect)
             REJECTED             -> REJECTED                  (-> architect)
         revise_contract (architect, only from ARCHITECTURE_CHANGES_REQUESTED)
             -> DRAFT                                          (-> reviewer)
         claim (programmer)          -> IN_PROGRESS
-        record_programmer_result    -> READY_FOR_ARCHITECT_REVIEW (-> architect)
-        record_implementation_review (architect):
-            APPROVED (all points) -> APPROVED (-> owner)
-            otherwise              -> CHANGES_REQUESTED (-> implementer)
+        record_programmer_result    -> READY_FOR_REVIEWER (-> reviewer)
+        record_implementation_review (reviewer; out_of_scope_ok/
+        out_of_scope_findings are required, not optional):
+            APPROVED (all points, out_of_scope_ok) -> APPROVED (-> owner)
+            otherwise                                -> CHANGES_REQUESTED (-> implementer)
+
+    Once both gates return a verdict, architect+owner do one final,
+    non-gating pass for strategic fit — not tracked as contract state,
+    since nothing about the contract itself changes as a result of it.
     """
 
     def __init__(self, project_root: Path) -> None:
@@ -123,9 +150,13 @@ class ContractStore:
         created_by: str = "architect",
         implementer: str = "programmer",
         reviewer: str = "reviewer",
+        risk_level: RiskLevel | str = "standard",
     ) -> Contract:
         if not title.strip():
             raise ValueError("A contract must have a title.")
+        risk_level_upper = str(risk_level).lower()
+        if risk_level_upper not in {"standard", "high"}:
+            raise ValueError(f"Invalid risk_level: {risk_level!r}. Must be 'standard' or 'high'.")
 
         number = self.next_number()
         now = _timestamp()
@@ -143,6 +174,7 @@ class ContractStore:
             points=contract_points,
             implementer=implementer,
             reviewer=reviewer,
+            risk_level=risk_level_upper,  # type: ignore[arg-type]
             purpose=purpose.strip(),
             intent=intent.strip(),
             current_state=current_state.strip(),
@@ -167,6 +199,7 @@ class ContractStore:
         outputs: str = "",
         out_of_scope: str = "",
         future_evolution: str = "",
+        risk_level: RiskLevel | str | None = None,
     ) -> Contract:
         """Rewrite the requirements of a contract returned by the reviewer.
 
@@ -176,6 +209,10 @@ class ContractStore:
         the append-only rule. The history of past architecture review rounds
         (`architecture_review_rounds`) is never cleared. After revision the
         contract returns to DRAFT and is handed back to the reviewer.
+
+        `risk_level` is left unchanged unless explicitly given — a prior
+        escalation to "high" (by the architect at creation or the reviewer
+        during architecture review) is not silently lost on revision.
         """
         contract = self.load(number)
         if contract.status != "ARCHITECTURE_CHANGES_REQUESTED":
@@ -194,6 +231,13 @@ class ContractStore:
         contract.outputs = outputs.strip()
         contract.out_of_scope = out_of_scope.strip()
         contract.future_evolution = future_evolution.strip()
+        if risk_level is not None:
+            risk_level_upper = str(risk_level).lower()
+            if risk_level_upper not in {"standard", "high"}:
+                raise ValueError(
+                    f"Invalid risk_level: {risk_level!r}. Must be 'standard' or 'high'."
+                )
+            contract.risk_level = risk_level_upper  # type: ignore[assignment]
         contract.status = "DRAFT"
         contract.assigned_to = contract.reviewer
         contract.handoff_to = contract.reviewer
@@ -265,8 +309,8 @@ class ContractStore:
 
     def next_for_implementation_review(self) -> Contract | None:
         contracts = self.list_contracts(
-            assigned_to="architect",
-            statuses={"READY_FOR_ARCHITECT_REVIEW"},
+            assigned_to="reviewer",
+            statuses={"READY_FOR_REVIEWER"},
         )
         return contracts[0] if contracts else None
 
@@ -278,7 +322,16 @@ class ContractStore:
         findings: str,
         memory_updates: list[MemoryUpdate] | None = None,
         from_agent: str = "reviewer",
+        risk_level: RiskLevel | str | None = None,
     ) -> Contract:
+        """`risk_level` lets the reviewer escalate a contract to "high" here
+        if it spots real-system/credential/hardware exposure the architect
+        did not flag at creation (Tr5-base decision 7) — a genuine use of
+        the reviewer's independence, not a rubber stamp on the architect's
+        own risk call. Only escalation is supported here: passing
+        "standard" on a contract already flagged "high" is a no-op, not a
+        downgrade — lowering risk back down is not this call's job.
+        """
         contract = self.load(number)
         if contract.status != "DRAFT":
             raise ValueError(
@@ -291,6 +344,14 @@ class ContractStore:
         findings_text = findings.strip()
         if not findings_text:
             raise ValueError("Architecture review must include findings.")
+        if risk_level is not None:
+            risk_level_upper = str(risk_level).lower()
+            if risk_level_upper not in {"standard", "high"}:
+                raise ValueError(
+                    f"Invalid risk_level: {risk_level!r}. Must be 'standard' or 'high'."
+                )
+            if risk_level_upper == "high":
+                contract.risk_level = "high"
 
         round_number = len(contract.architecture_review_rounds) + 1
         contract.architecture_review_rounds.append(
@@ -298,6 +359,7 @@ class ContractStore:
                 "round": round_number,
                 "date": _timestamp(),
                 "verdict": verdict_upper,
+                "reviewer": from_agent,
                 "findings": findings_text,
             }
         )
@@ -356,7 +418,7 @@ class ContractStore:
         notes: list[dict[str, Any]],
         tests: list[str] | None = None,
         from_agent: str = "programmer",
-        to_agent: str = "architect",
+        to_agent: str = "reviewer",
     ) -> Contract:
         contract = self.load(number)
         if contract.status != "IN_PROGRESS":
@@ -374,12 +436,15 @@ class ContractStore:
             )
 
         global_tests = [str(item).strip() for item in (tests or []) if str(item).strip()]
+        note_at = _timestamp()
         for point in contract.points:
             raw = by_number[point.number]
             note = str(raw.get("note", "")).strip()
             if not note:
                 raise ValueError(f"Programmer note for point {point.number} is empty.")
             point.programmer_note = note
+            point.programmer_note_author = from_agent
+            point.programmer_note_at = note_at
             point.programmer_files = [
                 str(item).strip() for item in raw.get("files", []) if str(item).strip()
             ]
@@ -389,7 +454,7 @@ class ContractStore:
             point.status = "IMPLEMENTED"
 
         contract.completion_notes = summary.strip()
-        contract.status = "READY_FOR_ARCHITECT_REVIEW"
+        contract.status = "READY_FOR_REVIEWER"
         contract.assigned_to = to_agent
         contract.handoff_to = to_agent
         self.save(contract)
@@ -408,27 +473,45 @@ class ContractStore:
         approved: bool,
         summary: str,
         reviews: list[dict[str, Any]],
+        out_of_scope_ok: bool,
+        out_of_scope_findings: str,
         memory_updates: list[MemoryUpdate] | None = None,
-        from_agent: str = "architect",
+        from_agent: str = "reviewer",
         to_agent: str | None = None,
     ) -> Contract:
+        """`out_of_scope_ok`/`out_of_scope_findings` are required, not
+        optional (Tr5-base decision 1): the reviewer must explicitly state
+        whether anything beyond the contract's points was touched, not
+        just whether the required points were done. `out_of_scope_ok=False`
+        forces `CHANGES_REQUESTED` regardless of `approved` or the
+        per-point statuses — an unexplained out-of-scope change is a
+        defect on its own, not something the per-point verdicts alone
+        would necessarily catch.
+        """
         contract = self.load(number)
-        if contract.status != "READY_FOR_ARCHITECT_REVIEW":
+        if contract.status != "READY_FOR_REVIEWER":
             raise ValueError(
                 f"Implementation review can only be recorded in status "
-                f"READY_FOR_ARCHITECT_REVIEW, currently {contract.status}."
+                f"READY_FOR_REVIEWER, currently {contract.status}."
             )
         to_agent = to_agent or contract.implementer
+        out_of_scope_findings_text = out_of_scope_findings.strip()
+        if not out_of_scope_findings_text:
+            raise ValueError(
+                "out_of_scope_findings must state what was checked, even when "
+                "out_of_scope_ok is True."
+            )
 
         by_number = {int(item["point"]): item for item in reviews}
         missing = [point.number for point in contract.points if point.number not in by_number]
         if missing:
             raise ValueError(
-                "The architect must provide a review for every point. Missing points: "
+                "The reviewer must provide a review for every point. Missing points: "
                 + ", ".join(map(str, missing))
             )
 
         any_changes = False
+        note_at = _timestamp()
         for point in contract.points:
             raw = by_number[point.number]
             review = str(raw.get("review", "")).strip()
@@ -439,11 +522,13 @@ class ContractStore:
                 )
             if not review:
                 raise ValueError(f"Review for point {point.number} is empty.")
-            point.architect_review = review
+            point.reviewer_note = review
+            point.reviewer_note_author = from_agent
+            point.reviewer_note_at = note_at
             point.status = status  # type: ignore[assignment]
             any_changes = any_changes or status == "CHANGES_REQUESTED"
 
-        effective_approved = approved and not any_changes
+        effective_approved = approved and not any_changes and out_of_scope_ok
         summary_text = summary.strip()
         round_number = len(contract.implementation_review_rounds) + 1
         contract.implementation_review_rounds.append(
@@ -451,9 +536,12 @@ class ContractStore:
                 "round": round_number,
                 "date": _timestamp(),
                 "verdict": "APPROVED" if effective_approved else "CHANGES_REQUESTED",
+                "reviewer": from_agent,
                 "summary": summary_text,
+                "out_of_scope_ok": out_of_scope_ok,
+                "out_of_scope_findings": out_of_scope_findings_text,
                 "reviews": [
-                    {"point": point.number, "status": point.status, "review": point.architect_review}
+                    {"point": point.number, "status": point.status, "review": point.reviewer_note}
                     for point in contract.points
                 ],
             }
@@ -566,8 +654,9 @@ def render_contract(contract: Contract) -> str:
         "# Workflow",
         "",
         f"- Created by: `{contract.created_by}`",
-        f"- Reviewer (architecture review): `{contract.reviewer}`",
+        f"- Reviewer (both review gates): `{contract.reviewer}`",
         f"- Implementer: `{contract.implementer}`",
+        f"- Risk level: `{contract.risk_level}`",
         f"- Currently with: `{contract.assigned_to}`",
         f"- Handed off to: `{contract.handoff_to}`",
         f"- Created at: `{contract.created_at}`",
@@ -637,10 +726,15 @@ def render_contract(contract: Contract) -> str:
                 "",
                 "Programmer note:",
                 "",
-                point.programmer_note or "_Awaiting implementation._",
-                "",
             ]
         )
+        if point.programmer_note:
+            lines.append(f"_By `{point.programmer_note_author}`, {point.programmer_note_at}._")
+            lines.append("")
+            lines.append(point.programmer_note)
+        else:
+            lines.append("_Awaiting implementation._")
+        lines.append("")
         if point.programmer_files:
             lines.append("Files touched:")
             lines.extend(f"- `{item}`" for item in point.programmer_files)
@@ -649,14 +743,15 @@ def render_contract(contract: Contract) -> str:
             lines.append("Tests:")
             lines.extend(f"- {item}" for item in point.programmer_tests)
             lines.append("")
-        lines.extend(
-            [
-                "Architect's implementation review for this point:",
-                "",
-                point.architect_review or "_Awaiting review._",
-                "",
-            ]
-        )
+        lines.append("Reviewer's implementation review for this point:")
+        lines.append("")
+        if point.reviewer_note:
+            lines.append(f"_By `{point.reviewer_note_author}`, {point.reviewer_note_at}._")
+            lines.append("")
+            lines.append(point.reviewer_note)
+        else:
+            lines.append("_Awaiting review._")
+        lines.append("")
 
     lines.extend(
         [
@@ -684,7 +779,8 @@ def render_contract(contract: Contract) -> str:
             lines.extend(
                 [
                     f"### Round {round_data['round']} — {round_data['date']} — "
-                    f"Verdict: {round_data['verdict']}",
+                    f"Verdict: {round_data['verdict']} — "
+                    f"Reviewer: `{round_data.get('reviewer', 'reviewer')}`",
                     "",
                     round_data["findings"],
                     "",
@@ -715,12 +811,20 @@ def render_contract(contract: Contract) -> str:
     )
     if contract.implementation_review_rounds:
         for round_data in contract.implementation_review_rounds:
+            out_of_scope_ok = round_data.get("out_of_scope_ok")
+            out_of_scope_label = (
+                "OK" if out_of_scope_ok else "ISSUE FOUND" if out_of_scope_ok is not None else "N/A"
+            )
             lines.extend(
                 [
                     f"### Round {round_data['round']} — {round_data['date']} — "
-                    f"Verdict: {round_data['verdict']}",
+                    f"Verdict: {round_data['verdict']} — "
+                    f"Reviewer: `{round_data.get('reviewer', 'architect')}`",
                     "",
                     round_data["summary"],
+                    "",
+                    f"Out of Scope check: {out_of_scope_label} — "
+                    f"{round_data.get('out_of_scope_findings', '_not recorded_')}",
                     "",
                 ]
             )

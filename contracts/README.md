@@ -19,10 +19,13 @@ A contract always separates two layers:
 
 ## Roles
 
-- `architect` — drafts the contract (`create_contract`); runs
-  implementation review after implementation.
+- `architect` — drafts the contract (`create_contract`); after
+  implementation review, looks at how the approved result fits the plan
+  (non-gating — does not re-approve).
 - `reviewer` — independently runs architecture review BEFORE
-  implementation; the architect never approves its own proposal.
+  implementation and implementation review AFTER implementation (including
+  an Out of Scope check); the architect never approves its own proposal or
+  its own implementation.
 - `programmer` — implements only contracts that have passed architecture
   review with verdict `ACCEPTED`.
 
@@ -40,12 +43,12 @@ A contract always separates two layers:
 4. `READY_FOR_PROGRAMMER` — architecture review ended with verdict
    `ACCEPTED`.
 5. `IN_PROGRESS` — the programmer has claimed the contract.
-6. `READY_FOR_ARCHITECT_REVIEW` — implementation is done, awaiting
-   implementation review.
-7. `CHANGES_REQUESTED` — implementation review requires a fix; returned to
-   the programmer.
-8. `APPROVED` — implementation review approved every point; handed off to
-   the owner.
+6. `READY_FOR_REVIEWER` — implementation is done, awaiting implementation
+   review by the reviewer.
+7. `CHANGES_REQUESTED` — implementation review requires a fix (a point, or
+   an unexplained Out of Scope change); returned to the programmer.
+8. `APPROVED` — implementation review approved every point and confirmed
+   Out of Scope is clean; handed off to the owner.
 
 The `Handed off to` field determines the next participant in the workflow.
 A notification is written at the same time to `agents/<agent>/INBOX.md`.

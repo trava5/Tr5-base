@@ -26,3 +26,8 @@ Never deleted or overwritten — only a new entry is added.
   against a separate clone (`bod-nula`) where `.pytest-tmp/` was tracked
   with 25 leftover files; that clone needs the same `git rm --cached -r
   .pytest-tmp` applied directly. By Claude, checking `bod-nula`'s clonability.
+- 2026-08-16: Removed `_to_delete/` (an accidentally committed leftover
+  from transferring Tr5-base's ADR-028 bootstrap onto the owner's machine
+  via Claude's device bridge — a temp transfer archive and a stale git
+  lock placeholder, never meant to be tracked). By Claude, verifying the
+  first push to `Tr5-base`.

@@ -1471,3 +1471,77 @@ test alongside the corrected downgrade test). Every other audited area
 (decisions 1, 3, 4, 5, 6, 8, 10, and the 14-point whole-repo hygiene
 sweep) came back confirmed with no discrepancies — not re-summarized here
 since nothing about them changed.
+
+## ADR-035: Discovery Engine gitignore parser did not exclude a bare
+(no-trailing-slash) directory pattern — found by the first real clone's
+first `/new`
+
+**Context.** This is the first bug this template has produced under real
+use rather than under its own tests or an internal audit: the owner
+cloned `Tr5-base` into a genuinely new project (`Tr5-base-test`), filled
+in `GIT_REPO`, and ran `/new` for the very first time. The architect's
+own pre-draft Discovery Engine scan (decision 3) walked into the
+project's freshly created `.venv/` — a real Python virtualenv with
+thousands of vendored package files — and indexed the whole tree into
+`memory/CURRENT_STATE.md`, ballooning it to roughly 33k tokens. The
+resulting Claude call to draft `IMPLEMENTATION_CONTRACT_0001.md` failed
+with "The agent did not return valid JSON," and nothing was written.
+This is exactly the kind of gap the project's own Future Evolution notes
+(`templates/voice_module/README.md`, `IMPLEMENTATION_CONTRACT_0013`)
+anticipated: a first real run surfaces what no internal review can.
+
+The owner's own architect, running inside that separate `Tr5-base-test`
+session, diagnosed the root cause independently and correctly, citing
+exact file:line evidence, before this was ever reported here. That
+diagnosis was independently re-verified against this repository's own
+canonical copy of the same code before any fix was made.
+
+**Root cause.** `tools/discovery_engine/generate_current_state.py`'s
+`_load_gitignore_patterns()` classified a `.gitignore` line as a
+directory-exclusion pattern only if it ended with a trailing `/`. This
+project's own `.gitignore` (like most hand-written ones) listed `.venv`
+without a trailing slash — real git treats a bare name as matching a
+file *or* a directory of that name, but this parser routed a bare name
+into `file_patterns` only. `_is_excluded_directory()` therefore never
+matched `.venv` as a directory to prune, `os.walk()` descended into it,
+and every vendored file underneath was scanned and classified like any
+other project artifact. `BASELINE_EXCLUDED_DIRECTORY_NAMES` (only
+`.git`) has no built-in fallback for common virtualenv directory names
+either, so nothing else caught this before it reached
+`memory/CURRENT_STATE.md`.
+
+**Fix — framework layer, matching the architect's own recommendation**
+(not a one-off workaround in a single project's `.gitignore`, since
+every future clone would otherwise hit the same failure the first time
+its own `.venv/` existed):
+
+- `_load_gitignore_patterns()` now adds a bare (no-trailing-slash)
+  pattern to *both* `file_patterns` and `directory_patterns`, matching
+  real git semantics — a trailing slash still restricts a pattern to
+  directories only; a bare pattern now correctly matches either.
+- This repository's own `.gitignore` was additionally tightened from
+  `.venv` to `.venv/` — belt-and-suspenders consistency with every other
+  directory entry already in that file (`__pycache__/`, `.pytest_cache/`,
+  `.pytest-tmp/`, `.idea/`), not a substitute for the parser fix, since
+  the parser fix is what protects every other project's own
+  hand-written `.gitignore` too.
+- New regression test,
+  `test_scan_repository_excludes_a_directory_ignored_without_a_trailing_slash`
+  (`tests/test_discovery_engine.py`): builds a fake `.venv/lib/
+  site-packages/somepkg.py` tree under a `.gitignore` containing bare
+  `.venv`, and asserts none of those paths appear in `scan_repository()`'s
+  output while an unrelated `keep.md` does.
+
+**Verification**: `python -m pytest -q` — 80/80 passing (1 new).
+
+**Scope note — this fix does not reach already-cloned projects.**
+Per decision 2/ADR-020 ("no live sync... each cloned copy lives its own
+independent life from here on"), this fix updates only the canonical
+`Tr5-base` template. The owner's own `Tr5-base-test` clone has its own
+independent copy of the same buggy file and will not receive this fix
+automatically — it needs either a manual backport of the same two
+changes, or (truer to this project's own design, and a good second real
+test of the full pipeline) a contract run through `Tr5-base-test`'s own
+architect, which had already offered to prepare exactly that contract
+before this fix was written. That choice was left to the owner rather
+than made on their behalf.

@@ -64,6 +64,30 @@ def test_scan_repository_finds_files_and_respects_gitignore(tmp_path: Path) -> N
     assert not any(p == ".git" or p.startswith(".git/") for p in relative_paths)
 
 
+def test_scan_repository_excludes_a_directory_ignored_without_a_trailing_slash(
+    tmp_path: Path,
+) -> None:
+    """Regression test: a `.gitignore` entry commonly omits the trailing
+    slash for a directory (`.venv`, not `.venv/`) — real git still treats
+    a bare name as matching a directory of that name, not files only.
+    Found via a real first clone's first `/new` (memory/DECISIONS.md, the
+    ADR after ADR-034): a project-local `.venv/` leaked its entire
+    vendored package tree into `memory/CURRENT_STATE.md`, because the
+    bare `.venv` line was previously tracked only as a file pattern, so
+    `os.walk` was never pruned from descending into it."""
+    (tmp_path / ".gitignore").write_text(".venv\n", encoding="utf-8")
+    venv_site_packages = tmp_path / ".venv" / "lib" / "site-packages"
+    venv_site_packages.mkdir(parents=True)
+    (venv_site_packages / "somepkg.py").write_text("x = 1", encoding="utf-8")
+    (tmp_path / "keep.md").write_text("hello", encoding="utf-8")
+
+    artifacts = scan_repository(tmp_path)
+    relative_paths = {a["relative_path"] for a in artifacts}
+
+    assert "keep.md" in relative_paths
+    assert not any(p == ".venv" or p.startswith(".venv/") for p in relative_paths)
+
+
 def test_scan_repository_records_content_hash_for_files_not_directories(
     tmp_path: Path,
 ) -> None:

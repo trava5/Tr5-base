@@ -69,6 +69,18 @@ def _load_gitignore_patterns(repository_root: Path) -> tuple[set[str], set[str]]
     .gitignore files are not supported, matching the original engine's own
     documented v1.1 scope — not present in this template's .gitignore, so
     not implemented ahead of need (P2).
+
+    A trailing slash restricts a pattern to directories only (real git
+    semantics). A BARE pattern (no trailing slash) matches a file OR a
+    directory of that name — real git does not require a project to write
+    ``.venv/`` instead of ``.venv`` for a virtualenv directory to be
+    ignored, so this parser must not require it either. A bare pattern is
+    therefore added to both sets. Found via a real first clone's first
+    `/new` (memory/DECISIONS.md, the ADR after ADR-034): `.venv` in
+    `.gitignore` (no trailing slash) was previously only tracked as a
+    *file* pattern, so `_is_excluded_directory` never pruned the walk from
+    descending into it — a project-local virtualenv's thousands of
+    vendored files leaked straight into `memory/CURRENT_STATE.md`.
     """
     gitignore_path = repository_root / ".gitignore"
     directory_patterns: set[str] = set()
@@ -85,6 +97,7 @@ def _load_gitignore_patterns(repository_root: Path) -> tuple[set[str], set[str]]
             directory_patterns.add(line.rstrip("/"))
         else:
             file_patterns.add(line)
+            directory_patterns.add(line)
 
     return directory_patterns, file_patterns
 

@@ -294,6 +294,32 @@ def test_parse_fenced_json() -> None:
     assert data["approved"] is True
 
 
+def test_parse_json_response_error_includes_the_raw_response(tmp_path: Path) -> None:
+    """Regression test: the original error swallowed the agent's actual
+    response, leaving no way to tell prose-with-no-JSON apart from JSON
+    truncated mid-generation once the exception propagated up to
+    chat_architect.py's generic "Error while creating the contract: ..."
+    print (see ADR-037)."""
+    with pytest.raises(ValueError, match="Sorry, I could not draft that contract today"):
+        parse_json_response("Sorry, I could not draft that contract today.")
+
+
+def test_parse_json_response_error_keeps_both_ends_of_a_long_response() -> None:
+    """A truncation failure shows up at the *end* of a long response, so
+    the diagnostic snippet must keep the tail, not just the head."""
+    long_response = "{" + ("x" * 5000) + '"unterminated'
+
+    with pytest.raises(ValueError) as excinfo:
+        parse_json_response(long_response)
+
+    message = str(excinfo.value)
+    assert "characters omitted" in message
+    assert long_response[:50] in message
+    assert long_response[-20:] in message
+    # Bounded, not a full dump of the oversized response.
+    assert len(message) < len(long_response)
+
+
 def test_save_generates_working_state_md(tmp_path: Path) -> None:
     store = create_store(tmp_path)
     store.create_contract("Test", [{"assignment": "Point 1"}])

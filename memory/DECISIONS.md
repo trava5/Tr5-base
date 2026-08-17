@@ -1631,3 +1631,57 @@ credential-free git operations).
 **Verification**: `python -m pytest -q` — 86/86 passing (6 new: 2 in
 `test_contract_workflow.py`, 2 in `test_pipeline.py`, 2 in
 `test_git_ops.py`).
+
+## ADR-037: `parse_json_response` failures now include a bounded snippet
+of the actual response
+
+**Context.** After ADR-035's fix landed, the owner deleted and re-cloned
+`Tr5-base-test` fresh from the now-fixed `Tr5-base` and re-ran the exact
+same first reference command (`/new create project/HELLO.md ...`). It
+failed the same way as before: `Error while creating the contract: The
+agent did not return valid JSON. The response was not written to the
+contract.` — with no way to tell, from that message alone, whether this
+was a recurrence of ADR-035's root cause (something else now inflating
+`memory/CURRENT_STATE.md`), a different cause entirely (e.g. the model
+adding prose outside the expected JSON fence, or genuinely truncating
+mid-generation), or a one-off nondeterministic slip.
+
+**The actual gap.** `chat_architect.py`'s `/new` handler only prints
+`str(error)` on failure (`print(f"\nError while creating the contract:
+{error}")`); `parse_json_response`'s `ValueError` never carried anything
+beyond the fixed sentence above. The moment the exception propagated, the
+model's actual response — the one piece of evidence that could tell these
+different failure modes apart — was gone. Nothing else in the codebase
+retains it either (it's a local variable in `create_contract`/
+`revise_contract`, never written to a file or notified anywhere). This
+made every occurrence of this error, past or future, essentially
+undiagnosable after the fact — a real gap independent of whatever
+actually caused this specific instance.
+
+**Fix.** `parse_json_response` (`agents/contract_workflow.py`) now embeds
+a bounded diagnostic snippet of the actual response in the raised error:
+the first 1200 and last 800 characters (with an "N characters omitted"
+marker between them, when it's longer than that), via a new
+`_diagnostic_snippet()` helper. Keeping the tail is deliberate, not
+incidental: a truncation failure (a still-too-large input padding out
+generation until an output-token cap cuts it off mid-object) shows up at
+the *end* of the response, not the start — a head-only snippet would
+have hidden exactly the evidence that failure mode needs. Bounded on both
+ends so a response inflated by the same kind of oversized-input problem
+ADR-035 fixed once doesn't get dumped whole into the console either.
+
+**Tests** (`tests/test_contract_workflow.py`):
+`test_parse_json_response_error_includes_the_raw_response` (prose with no
+JSON at all surfaces verbatim in the error) and
+`test_parse_json_response_error_keeps_both_ends_of_a_long_response` (a
+long, deliberately unterminated response keeps both its head and tail,
+shows the omitted-character count, and stays bounded — not a full dump).
+
+**Verification**: `python -m pytest -q` — 88/88 passing (2 new).
+
+**Status of the original incident**: unresolved as of this entry — this
+ADR only fixes the *diagnosability* gap the recurrence exposed, not
+necessarily the recurrence's own root cause, which was not yet known
+when this was written (the raw response that would explain it was never
+captured). Whether it happens again with this fix in place, and what the
+newly-visible raw response actually shows, is the next real signal.

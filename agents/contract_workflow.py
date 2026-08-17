@@ -999,7 +999,15 @@ def parse_contract(content: str) -> Contract:
 
 
 def parse_json_response(text: str) -> dict[str, Any]:
-    """Parse JSON from a plain response or from a ```json ... ``` block."""
+    """Parse JSON from a plain response or from a ```json ... ``` block.
+
+    On failure, the raised error includes a bounded diagnostic snippet of
+    the actual response (see `_diagnostic_snippet`) — found missing during
+    the first real end-to-end test: "The agent did not return valid JSON"
+    on its own gave no way to tell prose-with-no-JSON-at-all apart from
+    JSON truncated mid-generation, and the raw response was otherwise
+    discarded the moment this exception propagated (see ADR-037).
+    """
     stripped = text.strip()
     fenced = re.search(r"```(?:json)?\s*(\{.*\})\s*```", stripped, re.DOTALL)
     candidate = fenced.group(1) if fenced else stripped
@@ -1007,11 +1015,27 @@ def parse_json_response(text: str) -> dict[str, Any]:
         value = json.loads(candidate)
     except json.JSONDecodeError as error:
         raise ValueError(
-            "The agent did not return valid JSON. The response was not written to the contract."
+            "The agent did not return valid JSON. The response was not "
+            "written to the contract. Raw response, for diagnosis:\n"
+            f"{_diagnostic_snippet(stripped)}"
         ) from error
     if not isinstance(value, dict):
         raise ValueError("The root of the agent's response must be a JSON object.")
     return value
+
+
+def _diagnostic_snippet(text: str, *, head: int = 1200, tail: int = 800) -> str:
+    """Bounds how much of a failed response gets echoed into an error
+    message: enough to actually diagnose it (is this prose with no JSON in
+    it at all? JSON that looks fine at the start but got cut off?) without
+    dumping an entire oversized response — e.g. one padded out by a
+    still-too-large `memory/CURRENT_STATE.md` — straight into the
+    console. Keeps both ends since a truncation failure shows up at the
+    tail, not the head."""
+    if len(text) <= head + tail:
+        return text
+    omitted = len(text) - head - tail
+    return f"{text[:head]}\n...[{omitted} characters omitted]...\n{text[-tail:]}"
 
 
 def _timestamp() -> str:

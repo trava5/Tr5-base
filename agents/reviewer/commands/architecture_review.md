@@ -29,6 +29,11 @@ against `AGENTS.md` and against `memory/DECISIONS.md`. In particular check:
   follow the naming convention in `AGENTS.md` (`lowercase_with_underscores`,
   no diacritics, no hyphens)?
 
+Also check the contract's `risk_level` (Tr5-base decision 7): does it
+involve real credentials/API keys, real calls to external systems,
+native/hardware libraries, or a risk of landing personal/real data in
+git, and the architect marked it `"standard"` anyway? If so, escalate it.
+
 Do not edit files. Return only valid JSON with no additional commentary:
 
 {
@@ -41,6 +46,10 @@ Do not edit files. Return only valid JSON with no additional commentary:
     }
   ]
 }
+
+Include `"risk_level": "high"` in the JSON only when escalating — omit
+the key entirely otherwise; you may never lower a contract's risk_level
+back to `"standard"`.
 
 Rules:
 - "verdict" is only `ACCEPTED`, `CHANGES_REQUESTED`, or `REJECTED`,

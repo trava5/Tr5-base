@@ -55,6 +55,17 @@ A notification is written at the same time to `agents/<agent>/INBOX.md`.
 Approved contracts are handed off to the project owner and appear in
 `contracts/OWNER_INBOX.md`.
 
+`risk_level` (`standard` or `high`, Tr5-base decision 7) is separate from
+`status` — it does not add new statuses, it changes how the pipeline moves
+between them. A `standard` contract runs through `READY_FOR_PROGRAMMER` →
+`IN_PROGRESS` → `READY_FOR_REVIEWER` → `APPROVED`/`CHANGES_REQUESTED`
+without stopping. A `high` contract pauses at `READY_FOR_PROGRAMMER` and
+again at `READY_FOR_REVIEWER`, each requiring an explicit `/proceed <n>`,
+and its final `- REVIEWED` git checkpoint is pushed by the owner, not
+automatically. Set by the architect at creation; the reviewer may
+escalate it during architecture review, but never lower it back to
+`standard`.
+
 Do not edit contracts by hand unless an emergency fix is needed. The
 visible Markdown is generated from metadata stored at the end of each
 file. The history of both review gates (`Architecture Review`,

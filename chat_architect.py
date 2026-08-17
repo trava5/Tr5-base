@@ -13,8 +13,9 @@ from agents.pipeline import (
     create_contract,
     implement_next,
     opening_briefing,
+    proceed,
     revise_contract,
-    review_next,
+    run_implementation_review,
     print_status,
     show_inbox,
 )
@@ -27,15 +28,21 @@ Commands available alongside the conversation:
   /new <topic>       drafts a new contract; the pipeline then runs on its
                       own (architecture review, and if accepted,
                       implementation and implementation review) and stops
-                      once it returns to the architect
+                      once it returns to the architect/owner — unless the
+                      contract is high-risk, which pauses twice for /proceed
   /revise <n> <topic> rewrites contract <n>'s requirements after
                       CHANGES_REQUESTED and continues the same way
+  /proceed <n>      resumes a high-risk contract paused before
+                      implementation or before implementation review
+                      (no-op for standard-risk contracts, which never pause)
   /work [n]         manual override: programmer picks up contract <n> (or
                       the next ready one)
   /review [n]       manual override: reviewer runs implementation review
                       on contract <n> (or the next ready one)
-  /commit <n>       after agreeing the implementation is sufficient,
-                      commits and pushes contract <n> (must be APPROVED)
+  /commit <n>       pushes contract <n>'s final "- REVIEWED" checkpoint
+                      (must be APPROVED); routine for standard-risk
+                      contracts (already auto-pushed), the actual manual
+                      step for high-risk ones
   /status           shows the contract queue
   /inbox            shows the architect's inbox
   /help             shows this help
@@ -122,9 +129,15 @@ def main(project_root: Path = WORKSPACE) -> None:
             if raw == "/review" or raw.startswith("/review "):
                 try:
                     number = int(raw.split(maxsplit=1)[1]) if " " in raw else None
-                    review_next(reviewer, store, number=number)
+                    run_implementation_review(reviewer, store, number=number)
                 except Exception as error:
                     print(f"\nError while reviewing the contract: {error}")
+                continue
+            if raw.startswith("/proceed "):
+                try:
+                    proceed(reviewer, programmer, store, int(raw.split(maxsplit=1)[1]))
+                except Exception as error:
+                    print(f"\nError while resuming the contract: {error}")
                 continue
             if raw.startswith("/commit "):
                 try:

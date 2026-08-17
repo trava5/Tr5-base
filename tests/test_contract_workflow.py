@@ -202,3 +202,68 @@ def test_allows_principles_memory_target(tmp_path: Path) -> None:
 def test_parse_fenced_json() -> None:
     data = parse_json_response('```json\n{"approved": true}\n```')
     assert data["approved"] is True
+
+
+def test_create_contract_defaults_to_standard_risk(tmp_path: Path) -> None:
+    store = create_store(tmp_path)
+    contract = store.create_contract("Test", [{"assignment": "Point 1"}])
+    assert contract.risk_level == "standard"
+
+
+def test_create_contract_accepts_high_risk(tmp_path: Path) -> None:
+    store = create_store(tmp_path)
+    contract = store.create_contract(
+        "Test", [{"assignment": "Point 1"}], risk_level="high"
+    )
+    assert contract.risk_level == "high"
+
+
+def test_create_contract_rejects_invalid_risk_level(tmp_path: Path) -> None:
+    store = create_store(tmp_path)
+    with pytest.raises(ValueError, match="Invalid risk_level"):
+        store.create_contract("Test", [{"assignment": "Point 1"}], risk_level="extreme")
+
+
+def test_reviewer_can_escalate_risk_level_during_architecture_review(
+    tmp_path: Path,
+) -> None:
+    store = create_store(tmp_path)
+    store.create_contract("Test", [{"assignment": "Point 1"}])
+    reviewed = store.record_architecture_review(
+        1, verdict="ACCEPTED", findings="fine", risk_level="high"
+    )
+    assert reviewed.risk_level == "high"
+
+
+def test_reviewer_cannot_downgrade_risk_level(tmp_path: Path) -> None:
+    store = create_store(tmp_path)
+    store.create_contract("Test", [{"assignment": "Point 1"}], risk_level="high")
+    reviewed = store.record_architecture_review(
+        1, verdict="ACCEPTED", findings="fine", risk_level="standard"
+    )
+    # "standard" from the reviewer is a no-op — it never lowers risk_level
+    # (Tr5-base decision 7).
+    assert reviewed.risk_level == "high"
+
+
+def test_revise_contract_preserves_risk_level_unless_given(tmp_path: Path) -> None:
+    store = create_store(tmp_path)
+    store.create_contract("Test", [{"assignment": "Point 1"}], risk_level="high")
+    store.record_architecture_review(
+        1, verdict="CHANGES_REQUESTED", findings="needs work"
+    )
+    revised = store.revise_contract(
+        1, title="Test (revised)", points=[{"assignment": "Point 1 fixed"}]
+    )
+    assert revised.risk_level == "high"
+
+    store.record_architecture_review(
+        1, verdict="CHANGES_REQUESTED", findings="still needs work"
+    )
+    lowered = store.revise_contract(
+        1,
+        title="Test (revised again)",
+        points=[{"assignment": "Point 1 fixed again"}],
+        risk_level="standard",
+    )
+    assert lowered.risk_level == "standard"

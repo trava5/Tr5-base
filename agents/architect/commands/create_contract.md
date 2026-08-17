@@ -14,6 +14,7 @@ with no additional commentary:
   "outputs": "what the implementation creates or changes (files, public API)",
   "out_of_scope": "what this change explicitly does not address (SHALL NOT)",
   "future_evolution": "what is deliberately deferred to later, so the implementation does not try to cover it now",
+  "risk_level": "standard",
   "points": [
     {
       "assignment": "concrete requirement (SHALL)",
@@ -33,7 +34,17 @@ Rules:
 - every point must have a clearly verifiable result,
 - include tests and documentation as separate points when needed,
 - do not include vague phrasing like "as needed",
+- "risk_level" is `"standard"` or `"high"` (Tr5-base decision 7) —
+  use `"high"` when the change involves real credentials/API keys, real
+  calls to external systems, native/hardware libraries (audio, GPU,
+  serial ports, etc.), or anything that risks landing personal/real data
+  in git. `"high"` pauses the pipeline for the owner's explicit
+  go-ahead before implementation and again before implementation review,
+  and the final commit is pushed by the owner, not automatically. Default
+  to `"standard"` — the reviewer can still escalate it during
+  architecture review if you missed something,
 - if `{{TASK}}` is only about editing an existing contract after
   CHANGES_REQUESTED from architecture review, take the stated findings
   into account and return the complete, rewritten content (not just a
-  diff).
+  diff); only include "risk_level" if you are deliberately changing it —
+  omitting it keeps the contract's current value.

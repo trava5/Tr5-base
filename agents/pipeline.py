@@ -26,8 +26,9 @@ def create_contract(
         outputs=str(data.get("outputs", "")),
         out_of_scope=str(data.get("out_of_scope", "")),
         future_evolution=str(data.get("future_evolution", "")),
+        risk_level=str(data.get("risk_level", "standard")),
     )
-    print(f"Created {store.path_for(contract.number).name} (DRAFT)")
+    print(f"Created {store.path_for(contract.number).name} (DRAFT, risk: {contract.risk_level})")
     reviewed = run_architecture_review(reviewer, store, contract.number)
     continue_pipeline(reviewer, programmer, store, reviewed)
 
@@ -53,6 +54,7 @@ def revise_contract(
         outputs=str(data.get("outputs", "")),
         out_of_scope=str(data.get("out_of_scope", "")),
         future_evolution=str(data.get("future_evolution", "")),
+        risk_level=data.get("risk_level"),
     )
     print(f"IMPLEMENTATION_CONTRACT_{number:04d} rewritten (DRAFT).")
     reviewed = run_architecture_review(reviewer, store, number)
@@ -66,13 +68,14 @@ def continue_pipeline(
 
     Only proceeds if the contract passed architecture review
     (READY_FOR_PROGRAMMER). CHANGES_REQUESTED and REJECTED already stop at
-    the architect/owner — nothing to chain. Commits the approved contract
-    (see ADR-019), then runs the programmer, then the reviewer's
-    implementation review (Tr5-base decision 1 — the reviewer holds both
-    gates, not the architect), and stops there regardless of verdict
-    (APPROVED or CHANGES_REQUESTED) — every return to the architect/owner
-    is a checkpoint, not a place to keep looping automatically (see
-    ADR-018).
+    the architect/owner — nothing to chain. Commits checkpoint 1 (see
+    ADR-019/ADR-030), then either continues straight through the programmer
+    and the reviewer's implementation review (`risk_level == "standard"`),
+    or pauses here and waits for an explicit `/proceed <n>` from the owner
+    (`risk_level == "high"`, Tr5-base decision 7) — the same pause happens
+    again after the programmer finishes, before the reviewer's
+    implementation review runs. Every return to the architect/owner is a
+    checkpoint, not a place to keep looping automatically (see ADR-018).
     """
     if contract.status != "READY_FOR_PROGRAMMER":
         return
@@ -86,13 +89,98 @@ def continue_pipeline(
         else "Nothing to commit before implementation."
     )
 
-    implemented = implement_next(programmer, store, number=contract.number)
+    if contract.risk_level == "high":
+        print(
+            f"IMPLEMENTATION_CONTRACT_{contract.number:04d} is high-risk; "
+            f"pausing before implementation (Tr5-base decision 7). "
+            f"Run /proceed {contract.number} when ready."
+        )
+        return
+
+    _implement_and_review(reviewer, programmer, store, contract.number)
+
+
+def proceed(
+    reviewer: Agent, programmer: Agent, store: ContractStore, number: int
+) -> None:
+    """Resumes a high-risk contract paused by `continue_pipeline` (Tr5-base
+    decision 7). Standard-risk contracts never pause, so this only does
+    something meaningful for `risk_level == "high"`, at one of its two
+    pause points: `READY_FOR_PROGRAMMER` (resumes implementation, then
+    pauses again before review) or `READY_FOR_REVIEWER` (resumes review).
+    Prints a message and does nothing if the contract is not at either
+    point."""
+    contract = store.load(number)
+    if contract.status == "READY_FOR_PROGRAMMER":
+        _implement_and_review(reviewer, programmer, store, number)
+        return
+    if contract.status == "READY_FOR_REVIEWER":
+        _review_and_commit(reviewer, store, number)
+        return
+    print(
+        f"IMPLEMENTATION_CONTRACT_{number:04d} is not at a pause point "
+        f"(status: {contract.status})."
+    )
+
+
+def _implement_and_review(
+    reviewer: Agent, programmer: Agent, store: ContractStore, number: int
+) -> None:
+    implemented = implement_next(programmer, store, number=number)
     if implemented is None:
         return
-    review_next(reviewer, store, number=implemented.number)
+
+    committed = commit_and_push(
+        store.project_root, f"CONTRACT_{implemented.number:04d} - IMPLEMENTED"
+    )
+    print(
+        f"Committed and pushed: CONTRACT_{implemented.number:04d} - IMPLEMENTED"
+        if committed
+        else "Nothing to commit after implementation."
+    )
+
+    if implemented.risk_level == "high":
+        print(
+            f"IMPLEMENTATION_CONTRACT_{implemented.number:04d} is high-risk; "
+            f"pausing before implementation review (Tr5-base decision 7). "
+            f"Run /proceed {implemented.number} when ready."
+        )
+        return
+
+    _review_and_commit(reviewer, store, implemented.number)
+
+
+def _review_and_commit(reviewer: Agent, store: ContractStore, number: int) -> None:
+    reviewed = run_implementation_review(reviewer, store, number=number)
+    if reviewed is None or reviewed.status != "APPROVED":
+        return
+
+    if reviewed.risk_level == "high":
+        print(
+            f"IMPLEMENTATION_CONTRACT_{number:04d} is APPROVED (high-risk) — "
+            f"the REVIEWED commit is not pushed automatically (Tr5-base "
+            f"decision 7). Run yourself, or use /commit {number}:\n"
+            f"  git add -A && git commit -m \"CONTRACT_{number:04d} - REVIEWED\" "
+            f"&& git push"
+        )
+        return
+
+    committed = commit_and_push(
+        store.project_root, f"CONTRACT_{number:04d} - REVIEWED"
+    )
+    print(
+        f"Committed and pushed: CONTRACT_{number:04d} - REVIEWED"
+        if committed
+        else "Nothing to commit after review."
+    )
 
 
 def commit_approved_contract(store: ContractStore, number: int) -> None:
+    """Manual override for the third checkpoint (`- REVIEWED`, see
+    ADR-030). For `standard`-risk contracts this is already auto-committed
+    by `continue_pipeline`/`proceed` and normally finds nothing to commit;
+    for `high`-risk contracts (Tr5-base decision 7) this is how the owner
+    actually pushes it."""
     contract = store.load(number)
     if contract.status != "APPROVED":
         print(
@@ -101,10 +189,10 @@ def commit_approved_contract(store: ContractStore, number: int) -> None:
         )
         return
     committed = commit_and_push(
-        store.project_root, f"CONTRACT_{number:04d} - IMPLEMENTED"
+        store.project_root, f"CONTRACT_{number:04d} - REVIEWED"
     )
     print(
-        f"Committed and pushed: CONTRACT_{number:04d} - IMPLEMENTED"
+        f"Committed and pushed: CONTRACT_{number:04d} - REVIEWED"
         if committed
         else "Nothing to commit."
     )
@@ -126,10 +214,11 @@ def run_architecture_review(reviewer: Agent, store: ContractStore, number: int) 
         number,
         verdict=str(data["verdict"]),
         findings=str(data["findings"]),
+        risk_level=data.get("risk_level"),
         memory_updates=updates,
     )
     print(
-        f"Architecture review: {contract.status}; "
+        f"Architecture review: {contract.status} (risk: {contract.risk_level}); "
         f"handed off to {contract.handoff_to}."
     )
     return contract
@@ -159,11 +248,11 @@ def implement_next(
         notes=list(data["notes"]),
         tests=list(data.get("tests", [])),
     )
-    print(f"IMPLEMENTATION_CONTRACT_{contract.number:04d} handed off to the architect for review.")
+    print(f"IMPLEMENTATION_CONTRACT_{contract.number:04d} handed off to the reviewer for implementation review.")
     return contract
 
 
-def review_next(
+def run_implementation_review(
     reviewer: Agent, store: ContractStore, *, number: int | None = None
 ) -> Contract | None:
     """Runs implementation review via the reviewer agent (Tr5-base decision
@@ -210,7 +299,8 @@ def print_status(store: ContractStore) -> None:
     for contract in contracts:
         print(
             f"IMPLEMENTATION_CONTRACT_{contract.number:04d} | {contract.status:<28} | "
-            f"handoff: {contract.handoff_to:<10} | {contract.title}"
+            f"risk: {contract.risk_level:<8} | handoff: {contract.handoff_to:<10} | "
+            f"{contract.title}"
         )
 
 
@@ -231,7 +321,7 @@ def status_text(store: ContractStore) -> str:
     if not contracts:
         return "No contracts yet."
     return "\n".join(
-        f"IMPLEMENTATION_CONTRACT_{c.number:04d}: {c.status} "
+        f"IMPLEMENTATION_CONTRACT_{c.number:04d}: {c.status} (risk: {c.risk_level}) "
         f"(handed off to {c.handoff_to}) — {c.title}"
         for c in contracts
     )

@@ -117,10 +117,16 @@ def test_create_contract_chains_through_to_implementation_review(
     assert reviewer.calls == ["architecture_review", "review_contract"]
     assert programmer.calls == ["implement_contract"]
     assert architect.calls == ["create_contract"]
-    assert fake_git.calls == [(tmp_path.resolve(), "CONTRACT_0001")]
+    # standard-risk contracts auto-chain through all three checkpoints
+    # (Tr5-base decision 5): CONTRACT_NNNN, - IMPLEMENTED, - REVIEWED.
+    assert fake_git.calls == [
+        (tmp_path.resolve(), "CONTRACT_0001"),
+        (tmp_path.resolve(), "CONTRACT_0001 - IMPLEMENTED"),
+        (tmp_path.resolve(), "CONTRACT_0001 - REVIEWED"),
+    ]
 
 
-def test_commit_approved_contract_commits_with_implemented_suffix(
+def test_commit_approved_contract_commits_with_reviewed_suffix(
     tmp_path: Path, fake_git: FakeGit
 ) -> None:
     store = create_store(tmp_path)
@@ -143,7 +149,7 @@ def test_commit_approved_contract_commits_with_implemented_suffix(
 
     pipeline.commit_approved_contract(store, 1)
 
-    assert fake_git.calls == [(tmp_path.resolve(), "CONTRACT_0001 - IMPLEMENTED")]
+    assert fake_git.calls == [(tmp_path.resolve(), "CONTRACT_0001 - REVIEWED")]
 
 
 def test_commit_approved_contract_refuses_when_not_approved(
@@ -265,3 +271,127 @@ def test_opening_briefing_includes_status_and_inbox(tmp_path: Path) -> None:
 
     assert "IMPLEMENTATION_CONTRACT_0001" in briefing
     assert "agenda" in briefing.lower()
+
+
+def test_high_risk_contract_pauses_before_implementation(
+    tmp_path: Path, fake_git: FakeGit
+) -> None:
+    store = create_store(tmp_path)
+    architect = ScriptedAgent(
+        {
+            "create_contract": [
+                json.dumps(
+                    {
+                        "title": "Test",
+                        "points": [
+                            {"assignment": "Do X", "acceptance_criteria": ["X works"]}
+                        ],
+                        "risk_level": "high",
+                    }
+                )
+            ],
+        }
+    )
+    reviewer = ScriptedAgent(
+        {
+            "architecture_review": [
+                json.dumps({"verdict": "ACCEPTED", "findings": "fine"})
+            ],
+        }
+    )
+    programmer = ScriptedAgent({})
+
+    pipeline.create_contract(architect, reviewer, programmer, store, "Add X")
+
+    contract = store.load(1)
+    assert contract.status == "READY_FOR_PROGRAMMER"
+    assert contract.risk_level == "high"
+    assert programmer.calls == []
+    # Only checkpoint 1 fires before a high-risk pause — decision 7.
+    assert fake_git.calls == [(tmp_path.resolve(), "CONTRACT_0001")]
+
+
+def test_proceed_resumes_high_risk_contract_through_both_pause_points(
+    tmp_path: Path, fake_git: FakeGit
+) -> None:
+    store = create_store(tmp_path)
+    store.create_contract(
+        "Test", [{"assignment": "Do X"}], risk_level="high"
+    )
+    store.record_architecture_review(1, verdict="ACCEPTED", findings="fine")
+
+    reviewer = ScriptedAgent(
+        {
+            "review_contract": [
+                json.dumps(
+                    {
+                        "approved": True,
+                        "summary": "Good",
+                        "reviews": [
+                            {"point": 1, "status": "APPROVED", "review": "ok"}
+                        ],
+                        "out_of_scope_ok": True,
+                        "out_of_scope_findings": "Only a.py touched.",
+                        "memory_updates": [],
+                    }
+                )
+            ],
+        }
+    )
+    programmer = ScriptedAgent(
+        {
+            "implement_contract": [
+                json.dumps(
+                    {
+                        "summary": "done",
+                        "notes": [
+                            {"point": 1, "note": "did it", "files": ["a.py"], "tests": []}
+                        ],
+                        "tests": [],
+                    }
+                )
+            ],
+        }
+    )
+
+    # First /proceed: resumes implementation, then pauses again before review.
+    pipeline.proceed(reviewer, programmer, store, 1)
+    contract = store.load(1)
+    assert contract.status == "READY_FOR_REVIEWER"
+    assert programmer.calls == ["implement_contract"]
+    assert reviewer.calls == []
+    assert fake_git.calls == [
+        (tmp_path.resolve(), "CONTRACT_0001 - IMPLEMENTED"),
+    ]
+
+    # Second /proceed: resumes implementation review. Approved, but the
+    # final REVIEWED commit is not pushed automatically for high risk.
+    pipeline.proceed(reviewer, programmer, store, 1)
+    contract = store.load(1)
+    assert contract.status == "APPROVED"
+    assert reviewer.calls == ["review_contract"]
+    assert fake_git.calls == [
+        (tmp_path.resolve(), "CONTRACT_0001 - IMPLEMENTED"),
+    ]
+
+    # The owner finalizes it manually via /commit.
+    pipeline.commit_approved_contract(store, 1)
+    assert fake_git.calls == [
+        (tmp_path.resolve(), "CONTRACT_0001 - IMPLEMENTED"),
+        (tmp_path.resolve(), "CONTRACT_0001 - REVIEWED"),
+    ]
+
+
+def test_proceed_reports_no_pause_point_for_unrelated_status(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    store = create_store(tmp_path)
+    store.create_contract("Test", [{"assignment": "Do X"}])
+
+    reviewer = ScriptedAgent({})
+    programmer = ScriptedAgent({})
+    pipeline.proceed(reviewer, programmer, store, 1)
+
+    assert "not at a pause point" in capsys.readouterr().out
+    assert reviewer.calls == []
+    assert programmer.calls == []

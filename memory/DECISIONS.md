@@ -977,3 +977,87 @@ existence, its `permission_profile: review`, `Contract.reviewer` /
   verified by inspection — `chat_architect.py` and `agents/pipeline.py`
   now request `"review_contract"` from the `reviewer` agent, whose
   `commands_directory` is where the file now lives).
+
+## ADR-030: Risk-based pipeline pausing (`/proceed`) and the third `- REVIEWED` git checkpoint
+
+Tr5-base decisions 5, 7, and 8 (Phase 3 + Phase 5 of the implementation
+plan referenced in ADR-028, done together because Phase 3's pause
+branching and Phase 5's third checkpoint each only make sense with the
+other — Phase 3's "skip the final commit for high-risk contracts" needs
+the commit to exist; Phase 5's "auto-push it for standard-risk" needs the
+risk branch to know when not to).
+
+- `agents/pipeline.py`: `continue_pipeline()` now branches on
+  `contract.risk_level` after committing checkpoint 1 (`CONTRACT_NNNN`,
+  unchanged timing). `"standard"` continues straight through; `"high"`
+  stops and prints an instruction to run `/proceed <n>`. New `proceed()`
+  function resumes a paused high-risk contract from either of its two
+  pause points (`READY_FOR_PROGRAMMER` or `READY_FOR_REVIEWER`) — a
+  no-op message for any other status. Two new private helpers,
+  `_implement_and_review()` and `_review_and_commit()`, hold the shared
+  logic between `continue_pipeline()`'s first automatic run and
+  `proceed()`'s resumption, so the two paths cannot drift apart.
+- New checkpoint 2: right after the programmer finishes (in
+  `_implement_and_review()`), `CONTRACT_NNNN - IMPLEMENTED` is committed
+  and pushed automatically, regardless of risk_level — only checkpoint 3
+  is risk-gated. This retimes bod_zero's original single post-cycle
+  `- IMPLEMENTED` commit (previously fired manually via `/commit`, only
+  after implementation review passed) to fire right after the
+  programmer's own self-verification, matching Tr5's timing.
+- New checkpoint 3: right after implementation review returns `APPROVED`
+  (in `_review_and_commit()`), `CONTRACT_NNNN - REVIEWED` is committed
+  and pushed automatically for `"standard"` contracts. For `"high"`
+  contracts this auto-push is skipped; a message with the exact
+  `git commit`/`git push` command is printed instead.
+- `commit_approved_contract()` (the existing `/commit <n>` manual
+  override) is retimed to match: it now pushes `- REVIEWED` (was
+  `- IMPLEMENTED`), gated on status `APPROVED` as before. For
+  `"standard"` contracts this is now usually a no-op (already
+  auto-committed by the pipeline); for `"high"` contracts it is how the
+  owner actually pushes the final checkpoint — an equivalent, in-app
+  alternative to running the printed raw git command by hand.
+- `review_next()` renamed to `run_implementation_review()` (matching the
+  existing `run_architecture_review()` naming) — a pure rename, same
+  behavior, no call sites left on the old name (the rename in `CONTRACT
+  0002`/ADR-029 already routed it through the `reviewer` agent).
+- `run_architecture_review()` now forwards an optional `risk_level` from
+  the reviewer's JSON response into `record_architecture_review()` — the
+  escalation mechanic already existed in `contract_workflow.py` since
+  `CONTRACT 0001`, this wires it to the actual pipeline call.
+  `create_contract()`/`revise_contract()` forward the architect's
+  `risk_level` the same way (`revise_contract` only if explicitly given —
+  omitting the key preserves the contract's current value, so a prior
+  escalation to `"high"` is never silently lost by a routine revision).
+- `chat_architect.py`: new `/proceed <n>` command; `/commit <n>`'s help
+  text and behavior updated for the `- REVIEWED` retiming; `/review`
+  updated to call the renamed `run_implementation_review()`.
+- `agents/architect/commands/create_contract.md`: requests `risk_level`
+  in the JSON response, with the criteria from decision 7 (real
+  credentials/API keys, real external calls, native/hardware libraries,
+  risk of landing personal/real data in git) and an explicit note that
+  the reviewer can still escalate. `agents/reviewer/commands/
+  architecture_review.md`: documents the escalation check and that
+  `risk_level` should be included in the response only when escalating,
+  never to lower it.
+- `print_status()`/`status_text()` now show `risk_level` per contract.
+- `README.md`/`contracts/README.md`: `/proceed` documented, the Lifecycle
+  section rewritten for the three-checkpoint, risk-gated pipeline
+  instead of the old two-checkpoint description.
+- Verification: `python -m pytest -q` — 43/43 passing. Six new tests
+  cover `risk_level` at the `contract_workflow.py` level (default,
+  explicit, invalid rejection, reviewer escalation, reviewer cannot
+  downgrade, `revise_contract` preserves unless given); three new tests
+  cover the pipeline level (`create_contract` pauses before
+  implementation for a high-risk contract with only checkpoint 1
+  committed and the programmer never called; `proceed()` resumes through
+  both pause points across two calls, committing `- IMPLEMENTED`
+  automatically but not auto-pushing `- REVIEWED`, which `/commit`
+  finalizes manually; `proceed()` on a contract not at a pause point
+  prints a message and calls neither agent). The existing full-chain
+  test for a `standard`-risk contract was updated to expect all three
+  checkpoints; the existing `/commit` test was renamed and updated for
+  the `- REVIEWED` suffix.
+- Deliberately deferred to later phases, per the plan referenced in
+  ADR-028: Discovery Engine and generated `WORKING_STATE.md` (Phase 4,
+  still independent of this one); new principles and the Backlog section
+  (Phase 6); voice (Phase 7).

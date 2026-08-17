@@ -90,19 +90,24 @@ alongside the conversation:
                   from there the pipeline runs automatically (architecture
                   review, and if ACCEPTED, implementation and implementation
                   review too, both by the reviewer) and stops once it
-                  returns to the architect/owner
+                  returns to the architect/owner — unless the contract is
+                  high-risk, which pauses twice for /proceed (see below)
 /revise <n> <topic> architect rewrites the contract's requirements after
                   CHANGES_REQUESTED from architecture review, resubmits it
                   for review, and continues automatically the same way
+/proceed <n>      resumes a high-risk contract paused before implementation
+                  or before implementation review; a no-op for
+                  standard-risk contracts, which never pause
 /work [n]         manual override: programmer picks up contract <n> (or the
                   next ready one) — not needed in the normal flow
 /review [n]       manual override: reviewer runs implementation review on
                   contract <n> (or the next ready one) — not needed in the
                   normal flow
-/commit <n>       after discussing the implementation review result with
-                  the architect and agreeing it is sufficient, commits and
-                  pushes contract <n> (must be APPROVED)
-/status           shows the queue and handoffs
+/commit <n>       pushes contract <n>'s final `- REVIEWED` checkpoint (must
+                  be APPROVED); routine for standard-risk contracts (already
+                  auto-pushed, so usually a no-op), the actual manual step
+                  for high-risk ones
+/status           shows the queue, handoffs, and risk level
 /inbox            shows the architect's inbox
 /help             shows this list again
 /exit             exits
@@ -121,20 +126,33 @@ review is complete, the architect (with the owner) looks only at how the
 result fits the broader plan and what to do next — a non-gating pass, not
 a second approval.
 
-Owner approval happens once, at `/new`/`/revise` — from there the pipeline
-runs unattended (architecture review → programmer → implementation review)
-and stops again only once it returns to the architect, whatever the
-verdict (`APPROVED` or `CHANGES_REQUESTED`), the same way
-`ARCHITECTURE_CHANGES_REQUESTED`/`REJECTED` already stop there today (see
-ADR-018).
+Owner approval happens once, at `/new`/`/revise` — from there a
+`standard`-risk contract (the default) runs unattended (architecture
+review → programmer → implementation review) and stops again only once it
+returns to the architect/owner, whatever the verdict (`APPROVED` or
+`CHANGES_REQUESTED`), the same way `ARCHITECTURE_CHANGES_REQUESTED`/
+`REJECTED` already stop there today (see ADR-018).
 
-Two git checkpoints (see ADR-019): right after architecture review accepts
-a contract, before the programmer touches anything, the working tree is
-committed and pushed as `CONTRACT_NNNN` — the last clean state before
-implementation starts. After implementation review, once the owner has
-discussed the result with the architect and both agree it is sufficient,
-`/commit <n>` commits and pushes as `CONTRACT_NNNN - IMPLEMENTED`. Neither
-commit happens if there is nothing to commit.
+A `high`-risk contract (Tr5-base decisions 7 and 8 — real credentials,
+real external calls, native/hardware libraries, or a risk of landing
+personal/real data in git) pauses twice instead: right after Architecture
+Review is accepted, before the programmer starts, and again right after
+the programmer finishes, before the reviewer's Implementation Review
+runs — each requiring an explicit `/proceed <n>`. The architect sets
+`risk_level` at creation; the reviewer may escalate it to `high` during
+Architecture Review, but never lower it back to `standard`.
+
+Three git checkpoints (see ADR-019/ADR-030), auto-pushed regardless of
+risk level except the last one: right after architecture review accepts a
+contract, the working tree is committed and pushed as `CONTRACT_NNNN` —
+the last clean state before implementation starts. Right after the
+programmer finishes and self-verifies, before the reviewer's
+Implementation Review, it is committed and pushed as
+`CONTRACT_NNNN - IMPLEMENTED`. Once Implementation Review approves, it is
+committed and pushed as `CONTRACT_NNNN - REVIEWED` — automatically for
+`standard`-risk contracts, but for `high`-risk ones this final push is
+left to the owner (`/commit <n>`, or the printed git command), not done
+by an agent. No commit happens if there is nothing to commit.
 
 ```text
 architect (create_contract)

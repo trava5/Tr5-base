@@ -110,8 +110,12 @@ interfaces, behavior — established by reading the actual code. It never
 contains a proposal, a wish, or a justification for changing something;
 that belongs in "Purpose"/"Intent" instead. (Tr5 P3, on an automated
 Discovery Engine generating this kind of document, was considered and
-deferred — not adopted, see ADR-012 — since agentCodex has no such engine
-and none is currently planned.)
+deferred in the original `agentCodex` review — not adopted, see ADR-012 —
+since `agentCodex` had no such engine and none was planned at the time.
+That deferral no longer holds: Tr5-base ported the Discovery Engine (see
+ADR-031) and wires it in automatically before every contract, so
+`current_state` is now written from a freshly generated
+`memory/CURRENT_STATE.md` rather than manual reading alone.)
 
 ### P7 — Establishing the actual current state precedes reasoning about what should change.
 Status: Active
@@ -243,3 +247,66 @@ _Tr5 P18 ("not every entity is a platform Artifact") was reviewed and not
 adopted — see ADR-013. This closes the initial review of Tr5 P1-P13 and
 P18. Future principles are still added the same way: appended above once
 agreed, following the Revision Process above._
+
+### P16 — A fake must be realistic enough not to manufacture failures a real dependency would never cause.
+Status: Active
+Source: Tr5 P22
+
+A fake is necessary for safe isolation from real external systems (see
+P4), but an unrealistic one can point that same isolation discipline at a
+false conclusion. Tr5's own incident: a fake microphone stream that
+returned data instantly (no delay) made a correctly-working client appear
+to hang indefinitely — the tight, unpaced send loop a real microphone's
+natural timing would never produce; a timing-accurate fake (matching the
+real dependency's natural pacing, not just its interface) made the "hang"
+disappear. Worth a specific check whenever a fake stands in for something
+with real-world timing behavior (audio, network latency, hardware
+polling): does the fake's *pace*, not just its *interface*, resemble the
+real thing closely enough that a pass or failure means what it appears to
+mean.
+
+### P17 — Native/hardware library instances often need to be shared across threads, not created per-thread.
+Status: Active
+Source: Tr5 P23
+
+Tr5's own incident: two threads each creating their own
+`pyaudio.PyAudio()` instance — a reasonable-looking pattern when reading
+either thread's code in isolation — caused a hard access violation,
+because one thread's instance initialized while the other already had an
+active stream mid-read. No amount of Python-level testing (mocks, fakes)
+could have caught this: the failure is a native library's internal
+thread-safety limitation, invisible until run against real hardware.
+Fixed by sharing one instance across threads, created once and terminated
+once. When wrapping a native/hardware library (audio, GPU, serial ports,
+camera capture) across multiple threads, check the library's own guidance
+for shared-vs-per-thread instantiation before assuming either is safe by
+default — directly relevant to this template's own voice module (see
+`tr5_base_implementation_plan.md` Phase 7), which wraps exactly this kind
+of library.
+
+_This completes the review of Tr5 P19-P25 into `PRINCIPLES.md` (Tr5-base
+decision 6): P19→P2, P20→P3, P21→P4, P24→P5 were already adopted before
+this bootstrap; P22→P16 and P23→P17 adopted here. P25 ("browser-only
+globals need explicit stubs when testing frontend JS outside a browser")
+was reviewed and not adopted — narrow to Tr5's `platform_shell` frontend,
+which Tr5-base does not carry, and Tr5-base has no frontend JS of its own
+yet; revisit if a real case appears (per P11/P15), not written in
+speculatively. See ADR-032._
+
+## Open Questions (Backlog)
+
+These are known unresolved decisions. They are intentionally left open
+until a real case forces the decision — per P11/P15.
+
+- **Shared memory across every Architect of every project cloned from
+  this template.** Raised during Tr5-base decision 9 (per-role memory
+  model: only the architect keeps persistent memory; reviewer and
+  programmer get a fresh thread with no memory). The question is
+  whether an Architect's memory should ever be shared or pooled across
+  separate projects that were each cloned from this same `Tr5-base`
+  template — e.g. so a lesson learned by one project's Architect is
+  available to another's. Not designed now: no second cloned project
+  exists yet to validate the idea against, and each clone is meant to
+  live its own independent life (ADR-020/ADR-028). Revisit once one
+  project's own Architect memory has actually proven itself useful in
+  practice, not before.

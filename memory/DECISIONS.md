@@ -1166,3 +1166,55 @@ doesn't have" reasoning: it does now.
   gracefully).
 - Deliberately deferred: new principles and the Backlog section (Phase
   6); voice (Phase 7).
+
+## ADR-032: Tr5 P22/P23 adopted as PRINCIPLES.md P16/P17; Backlog section added; P6's stale Discovery Engine note fixed
+
+Tr5-base decision 6 (Phase 6 of the implementation plan referenced in
+ADR-028), completing the principles review Phase 4/ADR-031 left
+outstanding.
+
+- `PRINCIPLES.md` P16 added, source Tr5 P22 ("A fake must be realistic
+  enough not to manufacture failures a real dependency would never
+  cause") — adopted verbatim in substance, citing Tr5's own fake
+  microphone incident (an unpaced fake stream made a correctly-working
+  client look hung; a timing-accurate fake resolved it). Directly
+  relevant to this template's own upcoming voice module (Phase 7).
+- `PRINCIPLES.md` P17 added, source Tr5 P23 ("Native/hardware library
+  instances often need to be shared across threads, not created
+  per-thread") — adopted verbatim in substance, citing Tr5's own
+  `pyaudio.PyAudio()` per-thread instantiation incident (a native-layer
+  thread-safety failure invisible to Python-level testing). Also
+  directly relevant to Phase 7's voice module, called out explicitly in
+  the principle's own text.
+- Tr5 P25 ("browser-only globals need explicit stubs when testing
+  frontend JS outside a browser") reviewed and **not** adopted — narrow
+  to Tr5's `platform_shell` frontend, which this template does not
+  carry, and this template has no frontend JS of its own yet. Per
+  P11/P15 (validate on a real case, don't write in speculatively), left
+  out; revisit if a real case appears.
+- This closes the review of Tr5 P19-P25 into `PRINCIPLES.md`: P19→P2,
+  P20→P3, P21→P4, P24→P5 were already adopted before this bootstrap
+  (see the pre-ADR-028 history); P22→P16 and P23→P17 adopted here; P25
+  not adopted.
+- P6's parenthetical about the Discovery Engine was stale as of
+  ADR-031: it still said the engine "was considered and deferred... not
+  adopted, since `agentCodex` had no such engine and none was planned"
+  (true when it was first written, false since Phase 4 ported it).
+  Updated to note the deferral no longer holds, referencing ADR-031, so
+  the document does not contradict its own repository's current state
+  (per P6's own rule: current-state text must be fact, not stale
+  interpretation).
+- New "Open Questions (Backlog)" section added to `PRINCIPLES.md`,
+  mirroring Tr5's own `PRINCIPLES.md` Backlog section. First entry logs
+  the idea parked during Tr5-base decision 9 (per-role memory model):
+  whether an Architect's memory should ever be shared or pooled across
+  separate projects cloned from this same template. Not designed now —
+  no second cloned project exists yet to validate it against, and each
+  clone is meant to live its own independent life (ADR-020/ADR-028).
+  Explicitly deferred, not decided either way; revisit once one
+  project's own Architect memory has actually proven itself useful in
+  practice.
+- No code changes — this phase is documentation only. Verification:
+  `python -m pytest -q` — 64/64 passing (unchanged from ADR-031, as
+  expected for a documentation-only phase).
+- Deliberately deferred: voice (Phase 7).

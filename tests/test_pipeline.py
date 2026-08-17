@@ -180,6 +180,115 @@ def test_commit_approved_contract_refuses_when_not_approved(
     assert fake_git.calls == []
 
 
+def test_commit_approved_contract_prints_a_round_summary(
+    tmp_path: Path, fake_git: FakeGit, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Tr5-base decision 11: a short recap prints right after the final
+    checkpoint, whether the pipeline got there automatically or (as in the
+    first real test) the owner pieced it together via /work, /review, and
+    finally /commit."""
+    store = create_store(tmp_path)
+    store.create_contract("Test", [{"assignment": "Point 1"}])
+    store.record_architecture_review(1, verdict="ACCEPTED", findings="fine")
+    store.claim(1)
+    store.record_programmer_result(
+        1,
+        summary="done",
+        notes=[{"point": 1, "note": "did it", "files": ["a.py"], "tests": []}],
+    )
+    store.record_implementation_review(
+        1,
+        approved=True,
+        summary="good",
+        reviews=[{"point": 1, "status": "APPROVED", "review": "ok"}],
+        out_of_scope_ok=True,
+        out_of_scope_findings="No extra files touched.",
+    )
+    capsys.readouterr()  # discard setup noise, if any
+
+    pipeline.commit_approved_contract(store, 1)
+
+    out = capsys.readouterr().out
+    assert "IMPLEMENTATION_CONTRACT_0001 summary" in out
+    assert "Final status: APPROVED" in out
+    assert "a.py" in out
+
+
+def test_create_contract_auto_chain_prints_a_round_summary(
+    tmp_path: Path, fake_git: FakeGit, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Same recap, but reached through the fully automatic standard-risk
+    chain (/new) rather than the manual /commit override."""
+    store = create_store(tmp_path)
+    architect = ScriptedAgent(
+        {
+            "create_contract": [
+                json.dumps(
+                    {
+                        "title": "Test",
+                        "points": [
+                            {"assignment": "Do X", "acceptance_criteria": ["X works"]}
+                        ],
+                        "purpose": "P",
+                    }
+                )
+            ],
+        }
+    )
+    reviewer = ScriptedAgent(
+        {
+            "architecture_review": [
+                json.dumps(
+                    {"verdict": "ACCEPTED", "findings": "fine", "memory_updates": []}
+                )
+            ],
+            "review_contract": [
+                json.dumps(
+                    {
+                        "approved": True,
+                        "summary": "Good",
+                        "reviews": [
+                            {"point": 1, "status": "APPROVED", "review": "ok"}
+                        ],
+                        "out_of_scope_ok": True,
+                        "out_of_scope_findings": "Only a.py touched, matches point 1.",
+                        "memory_updates": [],
+                    }
+                )
+            ],
+        }
+    )
+    programmer = ScriptedAgent(
+        {
+            "implement_contract": [
+                json.dumps(
+                    {
+                        "summary": "done",
+                        "notes": [
+                            {
+                                "point": 1,
+                                "note": "did it",
+                                "files": ["a.py"],
+                                "tests": [],
+                            }
+                        ],
+                        "tests": [],
+                    }
+                )
+            ],
+        }
+    )
+    capsys.readouterr()
+
+    pipeline.create_contract(
+        architect, lambda: reviewer, lambda: programmer, store, "Add X"
+    )
+
+    out = capsys.readouterr().out
+    assert "IMPLEMENTATION_CONTRACT_0001 summary" in out
+    assert "Final status: APPROVED" in out
+
+
 def test_create_contract_stops_when_changes_requested_at_architecture_review(
     tmp_path: Path,
 ) -> None:

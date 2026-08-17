@@ -1545,3 +1545,89 @@ test of the full pipeline) a contract run through `Tr5-base-test`'s own
 architect, which had already offered to prepare exactly that contract
 before this fix was written. That choice was left to the owner rather
 than made on their behalf.
+
+## ADR-036: Tr5-base decision 11 — a printed round summary after the
+final checkpoint; git operations made non-interactive throughout
+
+**Context.** Two further friction points came directly out of the same
+first controlled real-world test (see ADR-035): with `IMPLEMENTATION_
+CONTRACT_0001`'s architecture-review checkpoint push failing on a stale
+credential (ADR-035's second finding), the owner had to resume the
+pipeline manually through `/work 1` → `/review 1` → `/commit 1` rather
+than the normal unattended `standard`-risk chain. Two things fell out of
+that manual detour:
+
+1. `/work 1` appeared to hang for an unusual length of time with no
+   console output and no error. Root cause: a `git push` (the
+   `- IMPLEMENTED` checkpoint) fell back to an interactive credential
+   prompt — either git's own terminal prompt or a Git Credential Manager
+   popup window — that was easy to miss behind other windows. The process
+   wasn't frozen; it was correctly waiting on input nobody knew it needed.
+   This directly contradicts `AGENTS.md`'s own existing rule ("Only
+   provider login may be interactive; nothing else should require
+   confirmation") — a rule that was true in intent but not enforced in
+   `agents/git_ops.py`'s code.
+2. Once the contract finally reached `APPROVED` via the manual `/work`/
+   `/review` sequence, there was no single point confirming "the whole
+   round is actually done, and here's what happened" — the owner had to
+   ask what happened, then run `/status`, to piece together the outcome.
+   `/review` is a deliberate manual override (Tr5-base decision 1) that
+   does not itself push the final checkpoint (by design — see `README.md`
+   Lifecycle), so it wasn't obviously the finishing line either.
+
+**Decision 11 — print a short recap after the final checkpoint.** New
+`render_contract_summary(contract)` in `agents/contract_workflow.py`:
+title, risk level, final status, the latest Architecture Review verdict
+(round + reviewer), how many points were approved (`n/total`), the
+distinct files the programmer touched across all points, and the latest
+Implementation Review verdict plus its Out of Scope result (`OK` /
+`FLAGGED`). A handful of lines, not the full contract — `render_contract`
+already exists for that.
+
+Wired into both places the final `- REVIEWED` checkpoint can land, so the
+summary prints regardless of which path got there:
+- `_review_and_commit()` (`agents/pipeline.py`) — the automatic
+  `standard`-risk chain, right after its `commit_and_push` call.
+- `commit_approved_contract()` — the manual `/commit <n>` override,
+  covering both the `high`-risk owner-paced path and exactly the
+  situation this test hit: a `standard`-risk contract finished by hand.
+
+Deliberately not wired into `/review`'s bare `run_implementation_review`
+call itself — that function can return `CHANGES_REQUESTED`, which isn't
+"done," and printing a "final" summary there would be misleading.
+
+**Non-interactive git, throughout `agents/git_ops.py`.** New
+`_non_interactive_env()` merges `GIT_TERMINAL_PROMPT=0` and
+`GCM_INTERACTIVE=Never` onto the current environment; every
+`subprocess.run` git call in the module (`_run_git`, the cached-diff
+check in `commit_and_push`, and both `git remote get-url` reads) now
+passes it. A stale or missing credential now fails immediately with the
+same clear `RuntimeError` any other git failure already produces (see
+`commit_and_push`'s own docstring, PRINCIPLES.md P3 — never proceed on
+top of unsaved state) instead of hanging indefinitely behind a prompt
+nobody may notice. This isn't a new behavior being invented — it's
+`AGENTS.md`'s existing "only provider login may be interactive" rule
+actually being enforced by the code that runs git, closing a real gap
+between the stated rule and what `git_ops.py` did.
+
+**Tests**: `tests/test_contract_workflow.py` —
+`test_render_contract_summary_recaps_a_completed_cycle` (asserts every
+field appears: contract number, title, risk, final status, architecture
+review verdict, points-approved count, touched files, implementation
+review verdict, Out of Scope result) and
+`test_render_contract_summary_flags_out_of_scope_findings` (a `False`
+`out_of_scope_ok` renders as `FLAGGED`, not `OK`). `tests/
+test_pipeline.py` — `test_commit_approved_contract_prints_a_round_summary`
+and `test_create_contract_auto_chain_prints_a_round_summary` (via
+`capsys`, confirm the summary actually reaches the console at both call
+sites). `tests/test_git_ops.py` —
+`test_run_git_disables_interactive_credential_prompts` (monkeypatches
+`subprocess.run` to capture the `env` kwarg, asserts both variables are
+set) and `test_commit_and_push_disables_interactive_credential_prompts_
+throughout` (a real local-remote `commit_and_push` still succeeds
+end-to-end with the non-interactive env in place, i.e. this doesn't break
+credential-free git operations).
+
+**Verification**: `python -m pytest -q` — 86/86 passing (6 new: 2 in
+`test_contract_workflow.py`, 2 in `test_pipeline.py`, 2 in
+`test_git_ops.py`).

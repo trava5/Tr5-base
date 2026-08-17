@@ -4,7 +4,13 @@ from pathlib import Path
 from typing import Callable
 
 from .agent_profile import Agent
-from .contract_workflow import Contract, ContractStore, MemoryUpdate, parse_json_response
+from .contract_workflow import (
+    Contract,
+    ContractStore,
+    MemoryUpdate,
+    parse_json_response,
+    render_contract_summary,
+)
 from .git_ops import commit_and_push
 from tools.discovery_engine.generate_current_state import render_diff_markdown, run_discovery_scan
 
@@ -205,6 +211,7 @@ def _review_and_commit(
         if committed
         else "Nothing to commit after review."
     )
+    print(render_contract_summary(reviewed))
 
 
 def commit_approved_contract(store: ContractStore, number: int) -> None:
@@ -228,6 +235,7 @@ def commit_approved_contract(store: ContractStore, number: int) -> None:
         if committed
         else "Nothing to commit."
     )
+    print(render_contract_summary(contract))
 
 
 def run_architecture_review(

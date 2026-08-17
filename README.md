@@ -163,6 +163,22 @@ committed and pushed as `CONTRACT_NNNN - REVIEWED` — automatically for
 left to the owner (`/commit <n>`, or the printed git command), not done
 by an agent. No commit happens if there is nothing to commit.
 
+Right after that final checkpoint lands — whether the pipeline reached it
+automatically or the owner pieced it together manually via `/work`,
+`/review`, and `/commit` (Tr5-base decision 11) — a short recap prints to
+the console: title, risk level, the Architecture Review verdict, how many
+points were approved and which files were touched, and the Implementation
+Review verdict plus its Out of Scope result. It exists so finishing a
+contract has one clear, glanceable confirmation of how the whole round
+went, without opening the contract file or running `/status`.
+
+All git operations in `agents/git_ops.py` run with interactive credential
+prompts disabled (`GIT_TERMINAL_PROMPT=0`, `GCM_INTERACTIVE=Never`) —
+consistent with `AGENTS.md`'s "only provider login may be interactive"
+rule. A stale or missing git credential now fails immediately with a
+clear error instead of a checkpoint push hanging behind an invisible
+prompt window.
+
 ```text
 architect (create_contract)
   DRAFT → reviewer

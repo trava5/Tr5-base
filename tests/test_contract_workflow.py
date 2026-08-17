@@ -4,7 +4,12 @@ from pathlib import Path
 
 import pytest
 
-from agents.contract_workflow import ContractStore, MemoryUpdate, parse_json_response
+from agents.contract_workflow import (
+    ContractStore,
+    MemoryUpdate,
+    parse_json_response,
+    render_contract_summary,
+)
 
 
 def create_store(tmp_path: Path) -> ContractStore:
@@ -91,6 +96,91 @@ def test_contract_full_cycle(tmp_path: Path) -> None:
     assert "Contract workflow" in (
         tmp_path / "memory" / "DECISIONS.md"
     ).read_text(encoding="utf-8")
+
+
+def test_render_contract_summary_recaps_a_completed_cycle(tmp_path: Path) -> None:
+    """The console summary printed after the final `- REVIEWED` checkpoint
+    (Tr5-base decision 11) — motivated by the first real end-to-end test,
+    where a manually pieced-together `/work`/`/review`/`/commit` sequence
+    left no single point confirming how the whole round actually went."""
+    store = create_store(tmp_path)
+    store.create_contract(
+        "Test workflow",
+        [
+            {
+                "assignment": "Add a feature.",
+                "acceptance_criteria": ["The feature is tested."],
+            },
+            {
+                "assignment": "Update the documentation.",
+                "acceptance_criteria": ["README contains an example."],
+            },
+        ],
+        purpose="Verify the contract cycle.",
+    )
+    store.record_architecture_review(
+        1,
+        verdict="ACCEPTED",
+        findings="Requirements match AGENTS.md, points are actionable in order.",
+    )
+    store.claim(1)
+    store.record_programmer_result(
+        1,
+        summary="Implemented.",
+        notes=[
+            {"point": 1, "note": "Feature added.", "files": ["module.py"], "tests": []},
+            {"point": 2, "note": "README updated.", "files": ["README.md"], "tests": []},
+        ],
+    )
+    contract = store.record_implementation_review(
+        1,
+        approved=True,
+        summary="Looks good.",
+        reviews=[
+            {"point": 1, "status": "APPROVED", "review": "Implementation matches."},
+            {"point": 2, "status": "APPROVED", "review": "Documentation matches."},
+        ],
+        out_of_scope_ok=True,
+        out_of_scope_findings="Diff only touches module.py and README.md, both in scope.",
+    )
+
+    summary = render_contract_summary(contract)
+
+    assert "IMPLEMENTATION_CONTRACT_0001" in summary
+    assert "Test workflow" in summary
+    assert "Risk: standard" in summary
+    assert "Final status: APPROVED" in summary
+    assert "Architecture Review: ACCEPTED (round 1, by reviewer)" in summary
+    assert "Implementation: 2/2 point(s) approved" in summary
+    assert "module.py" in summary and "README.md" in summary
+    assert "Implementation Review: APPROVED (round 1, by reviewer) | Out of Scope: OK" in summary
+
+
+def test_render_contract_summary_flags_out_of_scope_findings(tmp_path: Path) -> None:
+    store = create_store(tmp_path)
+    store.create_contract(
+        "Test workflow",
+        [{"assignment": "Add a feature.", "acceptance_criteria": ["Done."]}],
+    )
+    store.record_architecture_review(1, verdict="ACCEPTED", findings="Fine.")
+    store.claim(1)
+    store.record_programmer_result(
+        1,
+        summary="Implemented.",
+        notes=[{"point": 1, "note": "Done.", "files": ["module.py"], "tests": []}],
+    )
+    contract = store.record_implementation_review(
+        1,
+        approved=True,
+        summary="Touched an extra file.",
+        reviews=[{"point": 1, "status": "APPROVED", "review": "Matches."}],
+        out_of_scope_ok=False,
+        out_of_scope_findings="Also modified unrelated_file.py.",
+    )
+
+    summary = render_contract_summary(contract)
+
+    assert "Out of Scope: FLAGGED" in summary
 
 
 def test_architecture_review_accepts_memory_updates(tmp_path: Path) -> None:

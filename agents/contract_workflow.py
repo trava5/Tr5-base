@@ -739,6 +739,48 @@ def _build_points(points: list[dict[str, Any]]) -> list[ContractPoint]:
     return contract_points
 
 
+def render_contract_summary(contract: Contract) -> str:
+    """Short, human-readable recap of one contract's full round, printed to
+    the console right after its final `- REVIEWED` checkpoint lands
+    (Tr5-base decision 11). Motivated by the first real end-to-end test:
+    with the pipeline able to pause on `high` risk, get interrupted by an
+    unrelated environment failure (e.g. a git credential problem), or be
+    walked through manually via `/work`/`/review`/`/commit`, there was no
+    single point that confirmed "yes, this whole round finished, and here
+    is what actually happened" without opening the contract file or
+    running `/status`. A handful of lines, not the full contract."""
+    lines = [
+        f"--- IMPLEMENTATION_CONTRACT_{contract.number:04d} summary ---",
+        contract.title,
+        f"Risk: {contract.risk_level} | Final status: {contract.status}",
+    ]
+
+    if contract.architecture_review_rounds:
+        latest = contract.architecture_review_rounds[-1]
+        lines.append(
+            f"Architecture Review: {latest['verdict']} "
+            f"(round {latest['round']}, by {latest['reviewer']})"
+        )
+
+    approved_points = sum(1 for point in contract.points if point.status == "APPROVED")
+    lines.append(f"Implementation: {approved_points}/{len(contract.points)} point(s) approved")
+
+    files = sorted({f for point in contract.points for f in point.programmer_files})
+    if files:
+        lines.append(f"Files touched: {', '.join(files)}")
+
+    if contract.implementation_review_rounds:
+        latest = contract.implementation_review_rounds[-1]
+        out_of_scope = "OK" if latest["out_of_scope_ok"] else "FLAGGED"
+        lines.append(
+            f"Implementation Review: {latest['verdict']} "
+            f"(round {latest['round']}, by {latest['reviewer']}) | "
+            f"Out of Scope: {out_of_scope}"
+        )
+
+    return "\n".join(lines)
+
+
 def render_contract(contract: Contract) -> str:
     meta = json.dumps(asdict(contract), ensure_ascii=False, indent=2)
     lines: list[str] = [

@@ -1,7 +1,27 @@
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
+
+# AGENTS.md: "Only provider login may be interactive; nothing else should
+# require confirmation." A `git push` is not provider login, so it must
+# never sit waiting on one either. Left at their defaults, `git` itself
+# (GIT_TERMINAL_PROMPT) and Git Credential Manager (GCM_INTERACTIVE) can
+# both fall back to an interactive prompt (a terminal prompt, or a GCM
+# browser/GUI popup) when the cached credential is stale or missing —
+# found the hard way in the first real end-to-end test: a stale local
+# credential made a checkpoint push hang indefinitely behind a popup
+# window neither `chat_architect.py` nor its own owner necessarily
+# noticed, with no error, no timeout, nothing on the console. These two
+# env vars force any such prompt to fail immediately instead of hanging,
+# so a stale/missing credential surfaces as the same clear, immediate
+# `RuntimeError` any other git failure already does (see
+# `_run_git`) — fail fast, not fail silent-and-stuck.
+_NONINTERACTIVE_GIT_ENV = {
+    "GIT_TERMINAL_PROMPT": "0",
+    "GCM_INTERACTIVE": "Never",
+}
 
 
 def commit_and_push(project_root: Path, message: str) -> bool:
@@ -18,6 +38,7 @@ def commit_and_push(project_root: Path, message: str) -> bool:
     diff = subprocess.run(
         ["git", "diff", "--cached", "--quiet"],
         cwd=project_root,
+        env=_non_interactive_env(),
     )
     if diff.returncode == 0:
         return False
@@ -47,6 +68,7 @@ def sync_origin_from_env(project_root: Path, git_repo: str | None) -> str | None
         cwd=project_root,
         capture_output=True,
         text=True,
+        env=_non_interactive_env(),
     )
     if existing.returncode != 0:
         _run_git(project_root, ["remote", "add", "origin", git_repo])
@@ -78,6 +100,7 @@ def _refuse_template_origin(project_root: Path) -> None:
         cwd=project_root,
         capture_output=True,
         text=True,
+        env=_non_interactive_env(),
     )
     if origin.returncode != 0:
         return
@@ -111,8 +134,17 @@ def _run_git(project_root: Path, args: list[str]) -> subprocess.CompletedProcess
         cwd=project_root,
         capture_output=True,
         text=True,
+        env=_non_interactive_env(),
     )
     if result.returncode != 0:
         detail = result.stderr.strip() or result.stdout.strip()
         raise RuntimeError(f"git {' '.join(args)} failed: {detail}")
     return result
+
+
+def _non_interactive_env() -> dict[str, str]:
+    """The current environment, with `_NONINTERACTIVE_GIT_ENV` layered on
+    top. Only `push` (reached through `_run_git`) actually needs a
+    credential and can therefore actually prompt; applied uniformly here
+    anyway so nothing added to this module later has to remember to."""
+    return {**os.environ, **_NONINTERACTIVE_GIT_ENV}

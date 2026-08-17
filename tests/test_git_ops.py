@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from agents.git_ops import commit_and_push, sync_origin_from_env
+from agents.git_ops import commit_and_push, sync_origin_from_env, _run_git
 
 
 def init_repo_with_remote(tmp_path: Path) -> Path:
@@ -202,3 +202,45 @@ def test_commit_and_push_raises_on_missing_remote(tmp_path: Path) -> None:
 
     with pytest.raises(RuntimeError):
         commit_and_push(repo, "CONTRACT_0003")
+
+
+def test_run_git_disables_interactive_credential_prompts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test for the first real end-to-end test's stuck-`/work`
+    incident: a stale local git credential made a checkpoint push hang
+    behind an interactive prompt instead of failing. `_run_git` (and every
+    other git subprocess in this module) must set GIT_TERMINAL_PROMPT=0
+    and GCM_INTERACTIVE=Never so a missing/stale credential fails fast
+    with a clear RuntimeError instead of hanging (AGENTS.md: "Only
+    provider login may be interactive")."""
+    captured_env: dict[str, str] = {}
+
+    def fake_run(args, **kwargs):
+        captured_env.update(kwargs.get("env") or {})
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    _run_git(tmp_path, ["status"])
+
+    assert captured_env.get("GIT_TERMINAL_PROMPT") == "0"
+    assert captured_env.get("GCM_INTERACTIVE") == "Never"
+
+
+def test_commit_and_push_disables_interactive_credential_prompts_throughout(
+    tmp_path: Path,
+) -> None:
+    """Not just the final `push` — `add`, the cached-diff check, and the
+    template-origin guard's own `git remote get-url` all go through the
+    same non-interactive environment, so nothing added to this module
+    later has to remember to set it itself."""
+    repo = init_repo_with_remote(tmp_path)
+    (repo / "file.txt").write_text("change\n", encoding="utf-8")
+
+    committed = commit_and_push(repo, "CONTRACT_0004")
+
+    assert committed is True
+    # No interactive prompt was ever needed against a real local (file://)
+    # remote, so a clean run here is consistent with the non-interactive
+    # env not having broken normal, credential-free git operations.

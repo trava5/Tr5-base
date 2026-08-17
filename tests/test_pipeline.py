@@ -64,6 +64,15 @@ def test_create_contract_chains_through_to_implementation_review(
                     }
                 )
             ],
+        }
+    )
+    reviewer = ScriptedAgent(
+        {
+            "architecture_review": [
+                json.dumps(
+                    {"verdict": "ACCEPTED", "findings": "fine", "memory_updates": []}
+                )
+            ],
             "review_contract": [
                 json.dumps(
                     {
@@ -76,15 +85,6 @@ def test_create_contract_chains_through_to_implementation_review(
                         "out_of_scope_findings": "Only a.py touched, matches point 1.",
                         "memory_updates": [],
                     }
-                )
-            ],
-        }
-    )
-    reviewer = ScriptedAgent(
-        {
-            "architecture_review": [
-                json.dumps(
-                    {"verdict": "ACCEPTED", "findings": "fine", "memory_updates": []}
                 )
             ],
         }
@@ -114,9 +114,9 @@ def test_create_contract_chains_through_to_implementation_review(
 
     contract = store.load(1)
     assert contract.status == "APPROVED"
-    assert reviewer.calls == ["architecture_review"]
+    assert reviewer.calls == ["architecture_review", "review_contract"]
     assert programmer.calls == ["implement_contract"]
-    assert architect.calls == ["create_contract", "review_contract"]
+    assert architect.calls == ["create_contract"]
     assert fake_git.calls == [(tmp_path.resolve(), "CONTRACT_0001")]
 
 
@@ -207,6 +207,13 @@ def test_create_contract_stops_after_changes_requested_implementation_review(
                     }
                 )
             ],
+        }
+    )
+    reviewer = ScriptedAgent(
+        {
+            "architecture_review": [
+                json.dumps({"verdict": "ACCEPTED", "findings": "fine"})
+            ],
             "review_contract": [
                 json.dumps(
                     {
@@ -223,13 +230,6 @@ def test_create_contract_stops_after_changes_requested_implementation_review(
                         "out_of_scope_findings": "No extra files touched.",
                     }
                 )
-            ],
-        }
-    )
-    reviewer = ScriptedAgent(
-        {
-            "architecture_review": [
-                json.dumps({"verdict": "ACCEPTED", "findings": "fine"})
             ],
         }
     )

@@ -29,7 +29,7 @@ def create_contract(
     )
     print(f"Created {store.path_for(contract.number).name} (DRAFT)")
     reviewed = run_architecture_review(reviewer, store, contract.number)
-    continue_pipeline(architect, programmer, store, reviewed)
+    continue_pipeline(reviewer, programmer, store, reviewed)
 
 
 def revise_contract(
@@ -56,21 +56,22 @@ def revise_contract(
     )
     print(f"IMPLEMENTATION_CONTRACT_{number:04d} rewritten (DRAFT).")
     reviewed = run_architecture_review(reviewer, store, number)
-    continue_pipeline(architect, programmer, store, reviewed)
+    continue_pipeline(reviewer, programmer, store, reviewed)
 
 
 def continue_pipeline(
-    architect: Agent, programmer: Agent, store: ContractStore, contract: Contract
+    reviewer: Agent, programmer: Agent, store: ContractStore, contract: Contract
 ) -> None:
     """Chains the automatic part of the pipeline after architecture review.
 
     Only proceeds if the contract passed architecture review
     (READY_FOR_PROGRAMMER). CHANGES_REQUESTED and REJECTED already stop at
     the architect/owner — nothing to chain. Commits the approved contract
-    (see ADR-019), then runs the programmer, then the architect's
-    implementation review, and stops there regardless of verdict (APPROVED
-    or CHANGES_REQUESTED) — every return to the architect is a checkpoint
-    for the owner, not a place to keep looping automatically (see
+    (see ADR-019), then runs the programmer, then the reviewer's
+    implementation review (Tr5-base decision 1 — the reviewer holds both
+    gates, not the architect), and stops there regardless of verdict
+    (APPROVED or CHANGES_REQUESTED) — every return to the architect/owner
+    is a checkpoint, not a place to keep looping automatically (see
     ADR-018).
     """
     if contract.status != "READY_FOR_PROGRAMMER":
@@ -88,7 +89,7 @@ def continue_pipeline(
     implemented = implement_next(programmer, store, number=contract.number)
     if implemented is None:
         return
-    review_next(architect, store, number=implemented.number)
+    review_next(reviewer, store, number=implemented.number)
 
 
 def commit_approved_contract(store: ContractStore, number: int) -> None:
@@ -163,17 +164,19 @@ def implement_next(
 
 
 def review_next(
-    architect: Agent, store: ContractStore, *, number: int | None = None
+    reviewer: Agent, store: ContractStore, *, number: int | None = None
 ) -> Contract | None:
+    """Runs implementation review via the reviewer agent (Tr5-base decision
+    1 — the reviewer holds both review gates, not the architect)."""
     if number is None:
         queued = store.next_for_implementation_review()
         if queued is None:
-            print("Architect has no contract ready for implementation review.")
+            print("Reviewer has no contract ready for implementation review.")
             return None
         number = queued.number
 
     path = store.path_for(number)
-    response = architect.run_command(
+    response = reviewer.run_command(
         "review_contract",
         contract_path=path.relative_to(store.project_root).as_posix(),
         contract_content=path.read_text(encoding="utf-8"),

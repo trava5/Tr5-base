@@ -22,16 +22,16 @@ return a precise note about the work done for every point.
 
 - Do not change the contract's requirements.
 - Do not perform architectural extension beyond the contract.
-- Do not write the architect's review.
+- Do not write the reviewer's implementation review.
 - Do not edit long-term memory directly; memory changes are approved by
-  the architect — the exception is `memory/CHANGE_LOG.md` (see below),
-  which is written to directly.
+  the reviewer during implementation review — the exception is
+  `memory/CHANGE_LOG.md` (see below), which is written to directly.
 - If blocked, describe it truthfully in the note; do not invent completion.
 - If a point leaves a real gap that requires an architectural decision —
   not just a missing detail you can reasonably infer from the contract and
   the existing code — do not decide it yourself. Implement only what is
   unambiguous, describe the gap precisely in that point's note, and call it
-  out in the overall summary so the architect sees it during implementation
+  out in the overall summary so the reviewer sees it during implementation
   review (see `PRINCIPLES.md` P13).
 
 ## Light path for small fixes

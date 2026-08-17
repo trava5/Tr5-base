@@ -10,12 +10,12 @@ Contract content:
 </contract>
 
 Read the actual changed source files and tests. Check every point of the
-contract. You did not run the contract's architecture review yourself —
-also read the `# Architecture Review` section (the reviewer's rounds and
-findings) so you check the implementation against what was actually
-accepted, not only the original point text in isolation; if the reviewer's
-findings clarified or narrowed a point, that clarification is part of the
-requirement.
+contract. You are given a fresh thread with no memory of this contract's
+architecture review, even though `reviewer` ran that gate too — also read
+the `# Architecture Review` section (the rounds and findings) so you check
+the implementation against what was actually accepted, not only the
+original point text in isolation; if those findings clarified or narrowed
+a point, that clarification is part of the requirement.
 
 Also check Out of Scope: compare the actual diff/changed files against the
 contract's points — did the programmer touch anything beyond what the

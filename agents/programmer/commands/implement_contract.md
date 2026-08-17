@@ -7,6 +7,13 @@ Content:
 {{CONTRACT_CONTENT}}
 </contract>
 
+Before writing any code, read the related/neighboring files in the same
+module or directory as what you are about to change (existing naming,
+error handling, structure, test patterns) — you are given a fresh thread
+with no memory of past contracts or prior conventions in this project
+(Tr5-base decision 9), so this step, plus `PRINCIPLES.md`, is how code
+stays consistent instead of relying on recollection.
+
 Make actual changes to the source files. When done, return only valid
 JSON:
 

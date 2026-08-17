@@ -71,10 +71,14 @@
 - Significant implementation work must have a
   `contracts/IMPLEMENTATION_CONTRACT_NNNN.md` file. See "Light path for
   small fixes" below for what counts as "significant".
-- The architect prepares the requirements and, after implementation, runs
-  implementation review, point by point. Architecture review of the
-  contract BEFORE implementation is run independently by the `reviewer` —
-  the architect never approves its own proposal.
+- The architect prepares the requirements. Both review gates —
+  architecture review BEFORE implementation and implementation review
+  (point by point, plus an explicit Out of Scope check) AFTER
+  implementation — are run independently by the `reviewer`; the architect
+  never approves its own proposal or verifies its own implementation
+  (Tr5-base decision 1). After implementation review, the architect's pass
+  over the result is non-gating — a strategic-fit read, not a second
+  approval.
 - The programmer implements only the points of a contract that has passed
   architecture review with verdict `ACCEPTED`.
 - The contract's status and `handoff_to` determine who continues.

@@ -902,3 +902,78 @@ later extraction work (mirroring ADR-024's `source/` pattern).
   `git ls-files` output (identical set, no drift); no tests changed in
   this bootstrap step, so the existing suite's pass/fail state carries
   over unchanged from `bod_zero`.
+
+## ADR-029: `reviewer` holds both review gates; supersedes ADR-004's implementation-review-stays-with-architect stance
+
+Tr5-base decision 1 (Phase 1 + Phase 2 of the implementation plan
+referenced in ADR-028). Formally supersedes the last bullet of ADR-004,
+which kept implementation review with `architect` because Tr5 itself did
+not unambiguously separate the roles either. The owner wants genuine
+separation regardless of what Tr5's own practice did, so that stance no
+longer holds; everything else in ADR-004 (the `reviewer` agent's
+existence, its `permission_profile: review`, `Contract.reviewer` /
+`next_for_revision()`) is unaffected and still applies.
+
+- `agents/contract_workflow.py`: `ContractPoint.architect_review` renamed
+  to `reviewer_note`, with new `programmer_note_author`/`_at` and
+  `reviewer_note_author`/`_at` fields so every note states who wrote it
+  and when. `Contract.risk_level: Literal["standard", "high"] = "standard"`
+  added (groundwork for decision 7's automation dial, not yet wired into
+  pipeline pausing — that is a later phase). Status
+  `READY_FOR_ARCHITECT_REVIEW` renamed to `READY_FOR_REVIEWER`.
+  `record_programmer_result()` now hands off to `"reviewer"` (was
+  `"architect"`). `record_implementation_review()` now requires
+  `out_of_scope_ok: bool` and `out_of_scope_findings: str` — an
+  unexplained out-of-scope change forces `CHANGES_REQUESTED` on its own,
+  regardless of the per-point verdicts — and defaults `from_agent` to
+  `"reviewer"`. `record_architecture_review()` accepts an optional
+  `risk_level` escalation (the reviewer may raise `standard` to `high`,
+  never lower it) and records which agent reviewed in the round history.
+  `next_for_implementation_review()` now queues on
+  `assigned_to="reviewer"` (was `"architect"`), matching the new handoff.
+  `render_contract()` shows the attribution lines and the Out of Scope
+  check result.
+- `agents/architect/commands/review_contract.md` moved to
+  `agents/reviewer/commands/review_contract.md` (`git mv`), alongside the
+  existing `architecture_review.md` — extended to request
+  `out_of_scope_ok`/`out_of_scope_findings` and to describe the Out of
+  Scope check explicitly. `agents/pipeline.py`: `review_next()` now takes
+  the `reviewer` agent (was `architect`) and passes the two new fields
+  through; `continue_pipeline()` takes `reviewer` instead of `architect`
+  and hands implementation review to it; `create_contract()` /
+  `revise_contract()` updated to match. `chat_architect.py`'s `/review`
+  manual override now calls `review_next(reviewer, ...)`.
+- `agents/reviewer/config.json`: `load_private_memory`/`load_working_state`
+  set to `false` (was `true`) — the reviewer runs both gates on a fresh
+  thread with no memory of past contracts (Tr5-base decision 9), so a
+  persisted private memory or working-state file would go stale and
+  unread by design, not by omission. `agents/programmer/config.json` gets
+  the same two flags for the same reason (decision 9 applies the
+  fresh-agent-per-call model to the programmer too, not only the
+  reviewer); code consistency without memory is instead carried by
+  `PRINCIPLES.md` (always loaded) plus a new required first step in
+  `agents/programmer/commands/implement_contract.md`: read the related
+  files in the same module/directory before writing any code.
+  `agents/architect/config.json` needed no change — it already had
+  `load_private_memory`/`load_working_state: true`, matching decision 9's
+  architect-keeps-memory stance.
+- `ROLE.md`/`COMMANDS.md` rewritten for all three agents to state the new
+  split plainly (architect: drafts, non-gating post-review pass; reviewer:
+  both gates plus Out of Scope and risk escalation; programmer:
+  unchanged duties, reviewer instead of architect approves its memory
+  writes). `AGENTS.md` and `PRINCIPLES.md` (P10, P13) updated to match —
+  P10's own explanation of why implementation review is taken seriously
+  no longer rests on "a different agent than the one who accepted the
+  contract" (no longer true) but on the reviewer never checking a
+  contract it authored, plus decision 9's fresh-thread independence even
+  from its own earlier verdict on the same contract.
+- Deliberately deferred to later phases, per the plan referenced in
+  ADR-028: `risk_level`-based pipeline pausing and the `/proceed` command
+  (Phase 3); the third `- REVIEWED` git checkpoint (Phase 5); Discovery
+  Engine and generated `WORKING_STATE.md` (Phase 4).
+- Verification: `python -m pytest -q` — 34/34 passing (test doubles for
+  the agent roles, so the `commands/` file move does not affect the unit
+  suite directly; the real `AgentProfile.load_command()` path was
+  verified by inspection — `chat_architect.py` and `agents/pipeline.py`
+  now request `"review_contract"` from the `reviewer` agent, whose
+  `commands_directory` is where the file now lives).

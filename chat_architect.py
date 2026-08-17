@@ -32,7 +32,7 @@ Commands available alongside the conversation:
                       CHANGES_REQUESTED and continues the same way
   /work [n]         manual override: programmer picks up contract <n> (or
                       the next ready one)
-  /review [n]       manual override: architect runs implementation review
+  /review [n]       manual override: reviewer runs implementation review
                       on contract <n> (or the next ready one)
   /commit <n>       after agreeing the implementation is sufficient,
                       commits and pushes contract <n> (must be APPROVED)
@@ -122,7 +122,7 @@ def main(project_root: Path = WORKSPACE) -> None:
             if raw == "/review" or raw.startswith("/review "):
                 try:
                     number = int(raw.split(maxsplit=1)[1]) if " " in raw else None
-                    review_next(architect, store, number=number)
+                    review_next(reviewer, store, number=number)
                 except Exception as error:
                     print(f"\nError while reviewing the contract: {error}")
                 continue

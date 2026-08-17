@@ -36,8 +36,8 @@ architecture review) actually runs into a conflict with it or a case it
 does not cover, the same way Tr5's own P19-P24 were each extracted from a
 specific incident, not from a review calendar.
 
-When that happens: the reviewing agent (architect, or reviewer for
-architecture review) may propose an entry to `PRINCIPLES.md` via
+When that happens: the reviewing agent (the reviewer, for either gate) may
+propose an entry to `PRINCIPLES.md` via
 `memory_updates` (allowed since `PRINCIPLES.md` is in
 `ALLOWED_MEMORY_TARGETS` — see ADR-014), describing the conflict and which
 principle it concerns. This is appended, not a direct edit to the
@@ -156,20 +156,25 @@ Source: Tr5 P8
 If the actual implementation does not match what a contract's point
 requires, that mismatch is a defect — it gets fixed, it is never treated as
 an equally valid alternative reading. This is the reason implementation
-review exists and is taken seriously: the architect checks every point
+review exists and is taken seriously: the reviewer checks every point
 against its acceptance criteria, and any mismatch routes back to the
 programmer as `CHANGES_REQUESTED`, not settled by preference.
 
-This matters more here than in a single-reviewer setup, because the
-architect who runs implementation review is a different agent than the
-reviewer who ran architecture review before implementation — the architect
-was not the one who accepted the contract. The reviewer's findings and
-verdict (the `# Architecture Review` rounds) are part of the same rendered
-contract file the architect reads during implementation review, so they
-are structurally available; the architect's review command explicitly
-directs attention to them (see `agents/architect/commands/review_contract.md`)
-so what was actually accepted — not just the original point text in
-isolation — is what the implementation is checked against.
+This matters more here than in a single-pass setup, because the reviewer
+was not the one who wrote the contract — it never checks its own work.
+(Revised under Tr5-base decision 1: the `reviewer` now holds both review
+gates rather than a separate architect running implementation review; the
+independence this paragraph describes is preserved because the reviewer
+never checks a contract it authored, and because decision 9 gives it a
+fresh thread with no memory of the contract's own architecture review, so
+even its own earlier verdict is re-derived from the record, not recalled.
+See ADR-028.) The architecture review's findings and verdict (the
+`# Architecture Review` rounds) are part of the same rendered contract
+file the reviewer reads during implementation review, so they are
+structurally available; the review command explicitly directs attention to
+them (see `agents/reviewer/commands/review_contract.md`) so what was
+actually accepted — not just the original point text in isolation — is
+what the implementation is checked against.
 
 ### P11 — Validate a new structural decision on the smallest real case before generalizing it.
 Status: Active
@@ -207,7 +212,7 @@ point leaves a real gap that requires an architectural decision — not just
 a missing detail reasonably inferred from the contract and the existing
 code — the programmer does not decide it. It implements only what is
 unambiguous, describes the gap precisely in that point's note, and calls
-it out in the overall summary so the architect sees it during
+it out in the overall summary so the reviewer sees it during
 implementation review, instead of silently improvising. This is also why
 the `programmer` profile's permissions are `edit`, not `full`, and why its
 `ROLE.md` forbids direct edits to long-term memory.
